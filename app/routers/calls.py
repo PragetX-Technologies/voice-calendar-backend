@@ -17,27 +17,24 @@ router = APIRouter(prefix="/calls", tags=["call-trigger"])
 
 ELEVENLABS_OUTBOUND_CALL_URL = "https://api.elevenlabs.io/v1/convai/twilio/outbound_call"
 
-_AGENTS = {
-    "booking": {
-        "google": (settings.elevenlabs_google_agent_id, settings.elevenlabs_google_agent_phone_number_id),
-        "apple": (settings.elevenlabs_apple_agent_id, settings.elevenlabs_apple_agent_phone_number_id),
-    },
-    "reminder": {
-        "google": (settings.elevenlabs_reminder_google_agent_id, settings.elevenlabs_reminder_google_agent_phone_number_id),
-        "apple": (settings.elevenlabs_reminder_apple_agent_id, settings.elevenlabs_reminder_apple_agent_phone_number_id),
-    },
+_BOOKING_AGENTS = {
+    "google": (settings.elevenlabs_google_agent_id, settings.elevenlabs_google_agent_phone_number_id),
+    "apple": (settings.elevenlabs_apple_agent_id, settings.elevenlabs_apple_agent_phone_number_id),
 }
 
 
 @router.post("/trigger")
 async def trigger_call(payload: TriggerCallRequest):
     provider = payload.provider or settings.calendar_provider
-    agents = _AGENTS.get(payload.purpose)
-    if agents is None:
-        raise HTTPException(status_code=400, detail=f"Unknown purpose '{payload.purpose}', expected one of {list(_AGENTS)}")
-    if provider not in agents:
-        raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}', expected one of {list(agents)}")
-    agent_id, agent_phone_number_id = agents[provider]
+
+    if payload.purpose == "reminder":
+        agent_id, agent_phone_number_id = settings.elevenlabs_reminder_agent_id, settings.elevenlabs_reminder_agent_phone_number_id
+    elif payload.purpose == "booking":
+        if provider not in _BOOKING_AGENTS:
+            raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}', expected one of {list(_BOOKING_AGENTS)}")
+        agent_id, agent_phone_number_id = _BOOKING_AGENTS[provider]
+    else:
+        raise HTTPException(status_code=400, detail="Unknown purpose, expected 'booking' or 'reminder'")
 
     to_number = _to_e164(payload.to_number)
     call_context.set_last_to_number(to_number)

@@ -35,11 +35,9 @@ class Settings(BaseSettings):
     elevenlabs_apple_agent_id: str = ""
     elevenlabs_apple_agent_phone_number_id: str = ""
 
-    # --- ElevenLabs: separate reminder-call agent per calendar provider ---
-    elevenlabs_reminder_google_agent_id: str = ""
-    elevenlabs_reminder_google_agent_phone_number_id: str = ""
-    elevenlabs_reminder_apple_agent_id: str = ""
-    elevenlabs_reminder_apple_agent_phone_number_id: str = ""
+    # --- ElevenLabs: one reminder-call agent (Echo), regardless of calendar provider ---
+    elevenlabs_reminder_agent_id: str = ""
+    elevenlabs_reminder_agent_phone_number_id: str = ""
 
     # --- Security for the webhook tool endpoints ElevenLabs will call mid-conversation ---
     tool_webhook_secret: str
