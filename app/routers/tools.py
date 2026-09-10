@@ -10,6 +10,8 @@ request. We check for a shared-secret header so random requests can't hit
 these endpoints and mess with the calendar.
 """
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 
@@ -60,7 +62,12 @@ def get_business_hours(payload: GetBusinessHoursRequest):
     profile = business_service.get_any_profile(_resolve_provider(payload.provider) or settings.calendar_provider)
     if not profile:
         raise HTTPException(status_code=404, detail="No business profile found for this provider")
-    return {"hours": profile.get("hours", {})}
+    now = datetime.now(ZoneInfo(settings.default_timezone))
+    return {
+        "hours": profile.get("hours", {}),
+        "now": now.isoformat(),
+        "today": now.strftime("%a"),  # "Mon".."Sun", matches business_profiles.hours keys
+    }
 
 
 @router.post("/list-events", dependencies=[Depends(verify_webhook_secret)])
