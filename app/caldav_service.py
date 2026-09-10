@@ -3,8 +3,15 @@ CalDAV service layer: talks to Apple's iCloud CalDAV server to
 create / list / update / delete events.
 
 Auth note: Apple requires an APP-SPECIFIC PASSWORD for CalDAV access,
-not the user's real Apple ID password (2FA blocks that). Generate one at:
-https://appleid.apple.com -> Sign-In and Security -> App-Specific Passwords
+not the user's real Apple ID password (2FA blocks that).
+
+Two iCloud accounts get mirrored writes: "user" (caller's own calendar,
+credentials still hardcoded in .env — APPLE_ID/APPLE_APP_SPECIFIC_PASSWORD)
+and "provider" (the signed-in business owner's calendar, connected from the
+UI's "Connect Apple Calendar" flow and looked up per business account via
+calendar_connections_service — see app/routers/oauth.py). There is no
+.env fallback for "provider"; if nothing's connected yet, calls fail with a
+clear error telling the caller to connect it from Settings.
 """
 from __future__ import annotations
 
@@ -17,38 +24,61 @@ import caldav
 from icalendar import Calendar as ICalendar
 from icalendar import Event as IEvent
 
+from app import calendar_connections_service
 from app.config import settings
 
 logger = logging.getLogger("caldav_service")
-
-# Two iCloud accounts get mirrored writes: "user" (caller's own calendar) and
-# "provider" (the business/provider's calendar). Clients/calendars cached per account.
-_ACCOUNTS = {
-    "user": (settings.apple_id, settings.apple_app_specific_password),
-    "provider": (settings.apple_provider_id, settings.apple_app_specific_provider_password),
-}
 
 _clients: dict[str, caldav.DAVClient] = {}
 _calendars: dict[str, caldav.Calendar] = {}
 
 
-def _get_client(account: str = "user") -> caldav.DAVClient:
-    if account not in _clients:
-        username, password = _ACCOUNTS[account]
-        _clients[account] = caldav.DAVClient(
+def _client_cache_key(account: str, business_account_id: str | None) -> str:
+    return account if account == "user" else f"provider:{business_account_id}"
+
+
+def _resolve_provider_connection(business_account_id: str | None) -> dict | None:
+    """
+    Scoped lookup when we know which business is asking (the dashboard,
+    authenticated); falls back to "whichever business has Apple connected"
+    for the ElevenLabs webhook path, which has no signed-in account context.
+    """
+    if business_account_id:
+        conn = calendar_connections_service.get_connection(business_account_id, "apple")
+        if conn is not None:
+            return conn
+    return calendar_connections_service.get_any_connection("apple")
+
+
+def _provider_credentials(business_account_id: str | None) -> tuple[str, str]:
+    conn = _resolve_provider_connection(business_account_id)
+    if conn is None:
+        raise RuntimeError("Apple Calendar isn't connected for any business yet. Connect it from Settings.")
+    return conn["account"], conn["app_specific_password"]
+
+
+def _get_client(account: str = "user", business_account_id: str | None = None) -> caldav.DAVClient:
+    key = _client_cache_key(account, business_account_id)
+    if key not in _clients:
+        if account == "user":
+            username, password = settings.apple_id, settings.apple_app_specific_password
+        else:
+            username, password = _provider_credentials(business_account_id)
+        _clients[key] = caldav.DAVClient(
             url=settings.apple_caldav_url,
             username=username,
             password=password,
         )
-    return _clients[account]
+    return _clients[key]
 
 
-def _get_calendar(account: str = "user") -> caldav.Calendar:
+def _get_calendar(account: str = "user", business_account_id: str | None = None) -> caldav.Calendar:
     """Finds and caches the target calendar on the given iCloud account."""
-    if account in _calendars:
-        return _calendars[account]
+    key = _client_cache_key(account, business_account_id)
+    if key in _calendars:
+        return _calendars[key]
 
-    client = _get_client(account)
+    client = _get_client(account, business_account_id)
     principal = client.principal()
     calendars = principal.calendars()
 
@@ -69,16 +99,16 @@ def _get_calendar(account: str = "user") -> caldav.Calendar:
     else:
         calendar = calendars[0]
 
-    _calendars[account] = calendar
+    _calendars[key] = calendar
     return calendar
 
 
-def _mirror_to_provider(action: str, fn, *args) -> None:
+def _mirror_to_provider(action: str, fn, business_account_id: str | None, *args) -> None:
     """Best-effort: apply same op on provider account. Log, don't break caller's flow."""
-    if not settings.apple_provider_id:
+    if _resolve_provider_connection(business_account_id) is None:
         return
     try:
-        fn(_get_calendar("provider"), *args)
+        fn(_get_calendar("provider", business_account_id), *args)
     except Exception as e:
         logger.error("Provider-calendar mirror failed (%s): %s", action, e)
 
@@ -94,9 +124,9 @@ def _parse_dt(value: str) -> datetime:
     return dt
 
 
-def list_events(start_iso: str, end_iso: str, account: str = "user") -> list[dict]:
+def list_events(start_iso: str, end_iso: str, account: str = "user", business_account_id: str | None = None) -> list[dict]:
     """Lists events between start and end (inclusive), used to check availability/conflicts."""
-    calendar = _get_calendar(account)
+    calendar = _get_calendar(account, business_account_id)
     start = _parse_dt(start_iso)
     end = _parse_dt(end_iso)
 
@@ -153,6 +183,7 @@ def create_event(
     end_iso: str,
     description: str = "",
     location: str = "",
+    business_account_id: str | None = None,
 ) -> dict:
     """Creates a new event (e.g. a plumbing appointment) on the calendar."""
     calendar = _get_calendar()
@@ -180,7 +211,7 @@ def create_event(
     calendar.save_event(ical_str)
 
     # Mirror same event (same uid) to provider's calendar so both sides stay in sync.
-    _mirror_to_provider("create", lambda cal: cal.save_event(ical_str))
+    _mirror_to_provider("create", lambda cal: cal.save_event(ical_str), business_account_id)
 
     return {"uid": uid, "summary": summary, "start": start_iso, "end": end_iso}
 
@@ -192,6 +223,7 @@ def update_event(
     end_iso: str | None = None,
     description: str | None = None,
     location: str | None = None,
+    business_account_id: str | None = None,
 ) -> dict:
     """Updates fields on an existing event, identified by its uid."""
     if not uid:
@@ -238,12 +270,12 @@ def update_event(
         p_event.data = p_ical.to_ical().decode("utf-8")
         p_event.save()
 
-    _mirror_to_provider("update", _update_provider)
+    _mirror_to_provider("update", _update_provider, business_account_id)
 
     return {"uid": uid, "status": "updated"}
 
 
-def delete_event(uid: str) -> dict:
+def delete_event(uid: str, business_account_id: str | None = None) -> dict:
     """Deletes an event by uid."""
     if not uid:
         raise ValueError("uid is required")
@@ -261,6 +293,6 @@ def delete_event(uid: str) -> dict:
             raise ValueError(f"No event found with uid '{uid}' on provider calendar")
         p_event.delete()
 
-    _mirror_to_provider("delete", _delete_provider)
+    _mirror_to_provider("delete", _delete_provider, business_account_id)
 
     return {"uid": uid, "status": "deleted"}

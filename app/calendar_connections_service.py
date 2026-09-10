@@ -1,0 +1,63 @@
+"""
+Stores verified calendar connection credentials per (account, platform),
+collection "calendar_connections". Kept separate from business_profiles so
+secrets (refresh tokens / app-specific passwords) never round-trip through
+the business profile GET/PUT the frontend uses.
+
+# ponytail: secrets stored as plaintext, same as GOOGLE_REFRESH_TOKEN /
+# APPLE_APP_SPECIFIC_PASSWORD already are in .env; encrypt-at-rest later.
+"""
+from app.db import get_db
+
+PLATFORMS = ("google", "apple")
+
+
+def _doc_id(account_id: str, platform: str) -> str:
+    return f"{account_id}:{platform}"
+
+
+def save_connection(account_id: str, platform: str, account: str, secret: dict) -> None:
+    get_db().calendar_connections.replace_one(
+        {"_id": _doc_id(account_id, platform)},
+        {"account_id": account_id, "platform": platform, "account": account, **secret},
+        upsert=True,
+    )
+
+
+def get_connection(account_id: str, platform: str) -> dict | None:
+    doc = get_db().calendar_connections.find_one({"_id": _doc_id(account_id, platform)})
+    if doc is None:
+        return None
+    doc.pop("_id")
+    return doc
+
+
+def get_any_connection(platform: str) -> dict | None:
+    """
+    Fallback for callers with no account context (the ElevenLabs webhook
+    path — a shared-secret call, not a signed-in session). Picks whichever
+    business has this platform connected.
+
+    # ponytail: single-tenant assumption — first match wins. Once more than
+    # one business account is live, thread account_id through the webhook
+    # payload (e.g. a secret__account_id dynamic variable) instead.
+    """
+    doc = get_db().calendar_connections.find_one({"platform": platform})
+    if doc is None:
+        return None
+    doc.pop("_id")
+    return doc
+
+
+def delete_connection(account_id: str, platform: str) -> None:
+    get_db().calendar_connections.delete_one({"_id": _doc_id(account_id, platform)})
+
+
+def public_status(account_id: str) -> dict:
+    """Account info only, no secrets — safe to send to the frontend."""
+    status = {}
+    for platform in PLATFORMS:
+        conn = get_connection(account_id, platform)
+        if conn:
+            status[platform] = {"account": conn["account"]}
+    return status

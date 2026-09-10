@@ -17,6 +17,12 @@ logger = logging.getLogger("sms_service")
 
 TWILIO_MESSAGES_URL = "https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json"
 
+PRIVACY_NOTE = (
+    "Your personal details are stored securely and will not be shared directly "
+    "with the plumber. The plumber will contact you using our business number "
+    "+44 2046000841, so your personal number remains private."
+)
+
 
 def _to_e164(raw: str) -> str:
     """Twilio requires E.164 (+<country><number>); raw caller IDs / LLM-filled
@@ -35,6 +41,7 @@ def _send(to_number: str | None, body: str) -> None:
         logger.warning("SMS skipped: TWILIO_ACCOUNT_SID not configured")
         return
     to_number = _to_e164(to_number)
+    body = f"{body}\n{PRIVACY_NOTE}"
     try:
         url = TWILIO_MESSAGES_URL.format(sid=settings.twilio_account_sid)
         data = {"From": settings.twilio_from_number, "To": to_number, "Body": body}

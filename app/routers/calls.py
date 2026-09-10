@@ -31,7 +31,7 @@ async def trigger_call(payload: TriggerCallRequest):
 
     call_context.set_last_to_number(payload.to_number)
 
-    dynamic_variables = {"phone_number": payload.to_number}
+    dynamic_variables = {"phone_number": payload.to_number, "provider": provider}
     if payload.customer_name:
         dynamic_variables["customer_name"] = payload.customer_name
     if payload.reason:

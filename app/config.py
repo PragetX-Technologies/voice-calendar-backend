@@ -9,10 +9,11 @@ class Settings(BaseSettings):
     calendar_provider: str = "apple"  # "apple" or "google"
 
     # --- Apple iCloud CalDAV (used when calendar_provider == "apple") ---
+    # The "user" account below is still hardcoded here; the "provider" (business)
+    # account instead comes from calendar_connections_service, populated by the
+    # UI's "Connect Apple Calendar" flow — see app/caldav_service.py.
     apple_id: str = ""  # e.g. someone@icloud.com
     apple_app_specific_password: str = ""  # generated at appleid.apple.com
-    apple_provider_id: str = ""  # provider-side iCloud account, mirrored on every write
-    apple_app_specific_provider_password: str = ""
     apple_caldav_url: str = "https://caldav.icloud.com"
     calendar_name: str | None = None  # if None, uses the first/default calendar found
     default_timezone: str = "Asia/Kolkata"  # used when creating events
@@ -22,6 +23,10 @@ class Settings(BaseSettings):
     google_client_secret: str = ""
     google_refresh_token: str = ""  # obtained once via scripts/google_oauth_setup.py
     google_calendar_id: str = "primary"
+
+    # --- Google OAuth (business "Connect Google Calendar" flow, app/routers/oauth.py) ---
+    google_oauth_redirect_uri: str = "http://localhost:8000/oauth/google/callback"
+    frontend_base_url: str = "http://localhost:5173"  # postMessage target origin after OAuth popup completes
 
     # --- ElevenLabs: one agent per calendar provider, picked at call-trigger time ---
     elevenlabs_api_key: str
@@ -46,6 +51,14 @@ class Settings(BaseSettings):
     twilio_from_number: str = ""  # Twilio number SMS is sent from, E.164
     twilio_status_callback_url: str = ""  # e.g. https://voice-calendar-backend.pragetx.ai/api/sms/webhook
     default_sms_country_code: str = "+91"  # prepended when phone_number arrives without a '+' (e.g. raw caller ID)
+
+    # --- MongoDB (business profile storage) ---
+    mongodb_uri: str = "mongodb://localhost:27017"
+    mongodb_db_name: str = "voice_calendar"
+
+    # --- Business owner auth (email/password, JWT bearer tokens) ---
+    jwt_secret: str
+    jwt_expire_minutes: int = 60 * 24 * 7  # 7 days
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 

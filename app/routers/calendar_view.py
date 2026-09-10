@@ -1,19 +1,34 @@
 """
-Endpoints for the demo frontend: reads/writes events on the user's Apple
-calendar. Writes (create/update/delete) auto-mirror to the provider's
-calendar inside caldav_service, same as the ElevenLabs tool webhooks do —
-the frontend demo shows both iCloud accounts being kept in sync live.
+Endpoints for the demo frontend: reads/writes events on the user's calendar
+(Apple iCloud or Google, picked via `provider`). Writes (create/update/delete)
+auto-mirror to the provider's calendar inside caldav_service/google_calendar_service,
+same as the ElevenLabs tool webhooks do — the frontend demo shows both
+accounts being kept in sync live.
+
+The "provider" account's credentials come from the signed-in business's
+calendar connection (connected via Settings), not .env — every route here
+is scoped to the caller's account via require_account_id.
 """
 import logging
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 
-from app import caldav_service
+from app import caldav_service, calendar_events_service, google_calendar_service
+from app.auth import require_account_id
 
 logger = logging.getLogger("calendar_view")
 
 router = APIRouter(prefix="/calendar", tags=["calendar-view"])
+
+_BACKENDS = {
+    "apple": caldav_service,
+    "google": google_calendar_service,
+}
+
+
+def _backend(provider: str):
+    return _BACKENDS[provider]
 
 
 class CreateEventBody(BaseModel):
@@ -35,43 +50,80 @@ class UpdateEventBody(BaseModel):
 @router.get("/events")
 def get_events(
     account: str = Query(..., pattern="^(user|provider)$"),
+    provider: str = Query("apple", pattern="^(apple|google)$"),
     start_iso: str = Query(...),
     end_iso: str = Query(...),
+    account_id: str = Depends(require_account_id),
 ):
     try:
-        events = caldav_service.list_events(start_iso, end_iso, account=account)
-        return {"account": account, "events": events, "count": len(events)}
+        events = _backend(provider).list_events(start_iso, end_iso, account=account, business_account_id=account_id)
+        return {"account": account, "provider": provider, "events": events, "count": len(events)}
     except Exception as e:
-        logger.exception("get_events failed for account=%s", account)
+        logger.exception("get_events failed for account=%s provider=%s", account, provider)
         raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}")
 
 
 @router.post("/events")
-def create_event(payload: CreateEventBody):
+def create_event(
+    payload: CreateEventBody,
+    provider: str = Query("apple", pattern="^(apple|google)$"),
+    account_id: str = Depends(require_account_id),
+):
     try:
-        return caldav_service.create_event(
+        result = _backend(provider).create_event(
             summary=payload.summary,
             start_iso=payload.start_iso,
             end_iso=payload.end_iso,
             description=payload.description,
             location=payload.location,
+            business_account_id=account_id,
         )
+        calendar_events_service.upsert_event(
+            uid=result["uid"],
+            provider=provider,
+            account="user",
+            business_account_id=account_id,
+            summary=payload.summary,
+            start=payload.start_iso,
+            end=payload.end_iso,
+            location=payload.location,
+            description=payload.description,
+        )
+        return result
     except Exception as e:
         logger.exception("create_event failed")
         raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}")
 
 
 @router.patch("/events/{uid}")
-def update_event(uid: str, payload: UpdateEventBody):
+def update_event(
+    uid: str,
+    payload: UpdateEventBody,
+    provider: str = Query("apple", pattern="^(apple|google)$"),
+    account_id: str = Depends(require_account_id),
+):
     try:
-        return caldav_service.update_event(
+        result = _backend(provider).update_event(
             uid=uid,
             summary=payload.summary,
             start_iso=payload.start_iso,
             end_iso=payload.end_iso,
             description=payload.description,
             location=payload.location,
+            business_account_id=account_id,
         )
+        calendar_events_service.upsert_event(
+            uid=uid,
+            provider=provider,
+            account="user",
+            business_account_id=account_id,
+            summary=payload.summary,
+            start=payload.start_iso,
+            end=payload.end_iso,
+            location=payload.location,
+            description=payload.description,
+        )
+        return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
@@ -80,9 +132,15 @@ def update_event(uid: str, payload: UpdateEventBody):
 
 
 @router.delete("/events/{uid}")
-def delete_event(uid: str):
+def delete_event(
+    uid: str,
+    provider: str = Query("apple", pattern="^(apple|google)$"),
+    account_id: str = Depends(require_account_id),
+):
     try:
-        return caldav_service.delete_event(uid=uid)
+        result = _backend(provider).delete_event(uid=uid, business_account_id=account_id)
+        calendar_events_service.delete_event(uid=uid, provider=provider, account="user", business_account_id=account_id)
+        return result
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:

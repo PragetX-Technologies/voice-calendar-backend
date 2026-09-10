@@ -20,6 +20,12 @@ from app.config import settings
 
 logger = logging.getLogger("email_service")
 
+PRIVACY_NOTE = (
+    "Your personal details are stored securely and will not be shared directly "
+    "with the plumber. The plumber will contact you using our business number "
+    "+44 2046000841, so your personal number remains private."
+)
+
 
 def _parse_dt(value: str) -> datetime:
     dt = datetime.fromisoformat(value)
@@ -59,7 +65,7 @@ def _send(subject: str, body: str, ics_bytes: bytes | None = None, ics_method: s
         msg["Subject"] = subject
         msg["From"] = settings.google_sender_id
         msg["To"] = settings.booking_notification_email
-        msg.set_content(body)
+        msg.set_content(f"{body}\n{PRIVACY_NOTE}\n")
 
         if ics_bytes is not None:
             msg.add_attachment(

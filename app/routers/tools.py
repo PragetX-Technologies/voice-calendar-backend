@@ -13,7 +13,7 @@ import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 
-from app import call_context, calendar_service, email_service, sms_service
+from app import calendar_events_service, call_context, calendar_service, email_service, sms_service
 from app.config import settings
 from app.schemas import (
     CreateEventRequest,
@@ -73,6 +73,18 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
             location=payload.location,
             price_estimate=payload.price_estimate,
         )
+        background_tasks.add_task(
+            calendar_events_service.upsert_event,
+            uid=result["uid"],
+            provider=payload.provider or settings.calendar_provider,
+            summary=payload.summary,
+            start=payload.start_iso,
+            end=payload.end_iso,
+            location=payload.location,
+            description=payload.description,
+            phone_number=payload.phone_number or call_context.get_last_to_number(),
+            reminder_sent=False,
+        )
         return {"status": "created", **result}
     except Exception as e:
         logger.exception("create-event failed")
@@ -108,6 +120,16 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
             end_iso=payload.end_iso,
             location=payload.location,
         )
+        background_tasks.add_task(
+            calendar_events_service.upsert_event,
+            uid=payload.uid,
+            provider=payload.provider or settings.calendar_provider,
+            summary=payload.summary,
+            start=payload.start_iso,
+            end=payload.end_iso,
+            location=payload.location,
+            description=payload.description,
+        )
         return result
     except ValueError as e:
         logger.exception("update-event failed")
@@ -124,6 +146,11 @@ def delete_event(payload: DeleteEventRequest, background_tasks: BackgroundTasks)
         result = calendar_service.delete_event(uid=payload.uid, provider=payload.provider)
         background_tasks.add_task(email_service.send_cancellation_confirmation, uid=payload.uid)
         background_tasks.add_task(sms_service.send_cancellation_confirmation, to_number=payload.phone_number or call_context.get_last_to_number())
+        background_tasks.add_task(
+            calendar_events_service.delete_event,
+            uid=payload.uid,
+            provider=payload.provider or settings.calendar_provider,
+        )
         return result
     except ValueError as e:
         logger.exception("delete-event failed")
