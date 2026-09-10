@@ -4,27 +4,18 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app import accounts_service
 from app.auth import create_access_token, require_account_id
-from app.auth_schemas import AccountResponse, LoginRequest, SignupRequest, TokenResponse
+from app.auth_schemas import AccountResponse, LoginRequest, TokenResponse
 
 logger = logging.getLogger("auth")
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post("/signup", response_model=TokenResponse)
-def signup(payload: SignupRequest):
-    try:
-        account = accounts_service.create_account(payload.email, payload.password)
-    except ValueError as e:
-        raise HTTPException(status_code=409, detail=str(e))
-    return TokenResponse(access_token=create_access_token(account["_id"]))
-
-
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest):
-    account = accounts_service.authenticate(payload.email, payload.password)
+    account = accounts_service.authenticate(payload.username, payload.password)
     if account is None:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+        raise HTTPException(status_code=401, detail="Invalid username or password")
     return TokenResponse(access_token=create_access_token(account["_id"]))
 
 
