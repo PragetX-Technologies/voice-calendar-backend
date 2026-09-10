@@ -57,14 +57,15 @@ def _build_ics(uid: str, summary: str, start_iso: str, end_iso: str, location: s
     return ical.to_ical()
 
 
-def _send(subject: str, body: str, ics_bytes: bytes | None = None, ics_method: str = "REQUEST") -> None:
-    if not settings.booking_notification_email:
+def _send(subject: str, body: str, to_email: str | None = None, ics_bytes: bytes | None = None, ics_method: str = "REQUEST") -> None:
+    to_email = to_email or settings.booking_notification_email
+    if not to_email:
         return
     try:
         msg = EmailMessage()
         msg["Subject"] = subject
         msg["From"] = settings.google_sender_id
-        msg["To"] = settings.booking_notification_email
+        msg["To"] = to_email
         msg.set_content(f"{body}\n{PRIVACY_NOTE}\n")
 
         if ics_bytes is not None:
@@ -86,15 +87,15 @@ def _send(subject: str, body: str, ics_bytes: bytes | None = None, ics_method: s
                 server.login(settings.google_sender_id, settings.google_sender_app_specific_password)
                 server.send_message(msg)
 
-        logger.info("Email sent: %s -> %s", subject, settings.booking_notification_email)
+        logger.info("Email sent: %s -> %s", subject, to_email)
     except Exception:
         logger.exception(
             "Failed to send email: subject=%s smtp_host=%s smtp_port=%s to=%s",
-            subject, settings.smtp_host, settings.smtp_port, settings.booking_notification_email,
+            subject, settings.smtp_host, settings.smtp_port, to_email,
         )
 
 
-def send_booking_confirmation(uid: str, summary: str, start_iso: str, end_iso: str, location: str = "", price_estimate: str | None = None) -> None:
+def send_booking_confirmation(uid: str, summary: str, start_iso: str, end_iso: str, location: str = "", price_estimate: str | None = None, email: str | None = None) -> None:
     body = (
         f"Your appointment has been booked.\n\n"
         f"Summary: {summary}\n"
@@ -105,10 +106,10 @@ def send_booking_confirmation(uid: str, summary: str, start_iso: str, end_iso: s
     if price_estimate:
         body += f"Estimated cost: {price_estimate} (technician confirms final price on site)\n"
     ics = _build_ics(uid, summary, start_iso, end_iso, location, method="REQUEST", status="CONFIRMED")
-    _send("Booking Confirmation", body, ics_bytes=ics, ics_method="REQUEST")
+    _send("Booking Confirmation", body, to_email=email, ics_bytes=ics, ics_method="REQUEST")
 
 
-def send_update_confirmation(uid: str, summary: str | None, start_iso: str | None, end_iso: str | None, location: str | None = None) -> None:
+def send_update_confirmation(uid: str, summary: str | None, start_iso: str | None, end_iso: str | None, location: str | None = None, email: str | None = None) -> None:
     body = (
         f"Your appointment has been updated.\n\n"
         f"UID: {uid}\n"
@@ -120,9 +121,9 @@ def send_update_confirmation(uid: str, summary: str | None, start_iso: str | Non
     ics = None
     if summary and start_iso and end_iso:
         ics = _build_ics(uid, summary, start_iso, end_iso, location or "", method="REQUEST", status="CONFIRMED")
-    _send("Booking Update Confirmation", body, ics_bytes=ics, ics_method="REQUEST")
+    _send("Booking Update Confirmation", body, to_email=email, ics_bytes=ics, ics_method="REQUEST")
 
 
-def send_cancellation_confirmation(uid: str) -> None:
+def send_cancellation_confirmation(uid: str, email: str | None = None) -> None:
     body = f"Your appointment has been cancelled.\n\nUID: {uid}\n"
-    _send("Booking Cancellation Confirmation", body)
+    _send("Booking Cancellation Confirmation", body, to_email=email)

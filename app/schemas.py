@@ -24,6 +24,7 @@ class CreateEventRequest(BaseModel):
     location: str = Field("", description="Address or location of the appointment")
     provider: str | None = Field(None, description=_PROVIDER_DESC)
     phone_number: str | None = Field(None, description="Caller's phone number (dynamic variable from call trigger), used as SMS recipient")
+    email: str | None = Field(None, description="Customer's email address, collected during the call, used as the confirmation email recipient")
     price_estimate: str | None = Field(None, description="Spoken price range for the issue, e.g. '$150 to $400', to include in SMS/email confirmation")
 
 
@@ -36,12 +37,14 @@ class UpdateEventRequest(BaseModel):
     location: str | None = None
     provider: str | None = Field(None, description=_PROVIDER_DESC)
     phone_number: str | None = Field(None, description="Caller's phone number (dynamic variable from call trigger), used as SMS recipient")
+    email: str | None = Field(None, description="Customer's email address, parsed from the appointment record, used as the confirmation email recipient")
 
 
 class DeleteEventRequest(BaseModel):
     uid: str = Field(..., description="The unique id of the event to delete")
     provider: str | None = Field(None, description=_PROVIDER_DESC)
     phone_number: str | None = Field(None, description="Caller's phone number (dynamic variable from call trigger), used as SMS recipient")
+    email: str | None = Field(None, description="Customer's email address, parsed from the appointment record, used as the confirmation email recipient")
 
 
 # ---------- Call trigger schema (called BY your backend, TO ElevenLabs) ----------

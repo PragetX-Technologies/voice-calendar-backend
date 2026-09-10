@@ -63,6 +63,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
             end_iso=payload.end_iso,
             location=payload.location,
             price_estimate=payload.price_estimate,
+            email=payload.email,
         )
         background_tasks.add_task(
             sms_service.send_booking_confirmation,
@@ -83,6 +84,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
             location=payload.location,
             description=payload.description,
             phone_number=payload.phone_number or call_context.get_last_to_number(),
+            email=payload.email,
             reminder_sent=False,
         )
         return {"status": "created", **result}
@@ -111,6 +113,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
             start_iso=payload.start_iso,
             end_iso=payload.end_iso,
             location=payload.location,
+            email=payload.email,
         )
         background_tasks.add_task(
             sms_service.send_update_confirmation,
@@ -129,6 +132,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
             end=payload.end_iso,
             location=payload.location,
             description=payload.description,
+            email=payload.email,
         )
         return result
     except ValueError as e:
@@ -144,7 +148,7 @@ def delete_event(payload: DeleteEventRequest, background_tasks: BackgroundTasks)
     logger.info("delete-event payload=%s", payload.model_dump())
     try:
         result = calendar_service.delete_event(uid=payload.uid, provider=payload.provider)
-        background_tasks.add_task(email_service.send_cancellation_confirmation, uid=payload.uid)
+        background_tasks.add_task(email_service.send_cancellation_confirmation, uid=payload.uid, email=payload.email)
         background_tasks.add_task(sms_service.send_cancellation_confirmation, to_number=payload.phone_number or call_context.get_last_to_number())
         background_tasks.add_task(
             calendar_events_service.delete_event,
