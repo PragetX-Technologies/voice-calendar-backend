@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException
 from app import call_context
 from app.config import settings
 from app.schemas import TriggerCallRequest
+from app.sms_service import _to_e164
 
 router = APIRouter(prefix="/calls", tags=["call-trigger"])
 
@@ -29,9 +30,10 @@ async def trigger_call(payload: TriggerCallRequest):
         raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}', expected one of {list(_AGENTS)}")
     agent_id, agent_phone_number_id = _AGENTS[provider]
 
-    call_context.set_last_to_number(payload.to_number)
+    to_number = _to_e164(payload.to_number)
+    call_context.set_last_to_number(to_number)
 
-    dynamic_variables = {"phone_number": payload.to_number, "provider": provider}
+    dynamic_variables = {"phone_number": to_number, "provider": provider}
     if payload.customer_name:
         dynamic_variables["customer_name"] = payload.customer_name
     if payload.reason:
@@ -40,7 +42,7 @@ async def trigger_call(payload: TriggerCallRequest):
     body = {
         "agent_id": agent_id,
         "agent_phone_number_id": agent_phone_number_id,
-        "to_number": payload.to_number,
+        "to_number": to_number,
         "conversation_initiation_client_data": {
             "dynamic_variables": dynamic_variables
         },
