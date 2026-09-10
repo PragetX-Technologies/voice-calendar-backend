@@ -10,6 +10,10 @@ _PROVIDER_DESC = (
 )
 
 
+class GetBusinessHoursRequest(BaseModel):
+    provider: str | None = Field(None, description=_PROVIDER_DESC)
+
+
 class ListEventsRequest(BaseModel):
     start_iso: str = Field(..., description="Start of the search window, ISO 8601, e.g. 2026-07-25T00:00:00")
     end_iso: str = Field(..., description="End of the search window, ISO 8601, e.g. 2026-07-26T00:00:00")

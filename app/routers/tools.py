@@ -13,11 +13,12 @@ import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 
-from app import calendar_events_service, call_context, calendar_service, email_service, sms_service
+from app import business_service, calendar_events_service, call_context, calendar_service, email_service, sms_service
 from app.config import settings
 from app.schemas import (
     CreateEventRequest,
     DeleteEventRequest,
+    GetBusinessHoursRequest,
     ListEventsRequest,
     UpdateEventRequest,
 )
@@ -30,6 +31,23 @@ router = APIRouter(prefix="/tools", tags=["elevenlabs-tools"])
 def verify_webhook_secret(x_webhook_secret: str = Header(default="")) -> None:
     if x_webhook_secret != settings.tool_webhook_secret:
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
+
+
+def _owner_contact(provider: str | None) -> tuple[str | None, str | None]:
+    """(mobile, email) of the business owner, for mirroring customer confirmations to them too."""
+    profile = business_service.get_any_profile(provider or settings.calendar_provider)
+    if not profile:
+        return None, None
+    return profile.get("mobile"), profile.get("email")
+
+
+@router.post("/get-business-hours", dependencies=[Depends(verify_webhook_secret)])
+def get_business_hours(payload: GetBusinessHoursRequest):
+    logger.info("get-business-hours payload=%s", payload.model_dump())
+    profile = business_service.get_any_profile(payload.provider or settings.calendar_provider)
+    if not profile:
+        raise HTTPException(status_code=404, detail="No business profile found for this provider")
+    return {"hours": profile.get("hours", {})}
 
 
 @router.post("/list-events", dependencies=[Depends(verify_webhook_secret)])
@@ -74,6 +92,28 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
             location=payload.location,
             price_estimate=payload.price_estimate,
         )
+        owner_mobile, owner_email = _owner_contact(payload.provider)
+        if owner_email:
+            background_tasks.add_task(
+                email_service.send_booking_confirmation,
+                uid=result["uid"],
+                summary=payload.summary,
+                start_iso=payload.start_iso,
+                end_iso=payload.end_iso,
+                location=payload.location,
+                price_estimate=payload.price_estimate,
+                email=owner_email,
+            )
+        if owner_mobile:
+            background_tasks.add_task(
+                sms_service.send_booking_confirmation,
+                to_number=owner_mobile,
+                summary=payload.summary,
+                start_iso=payload.start_iso,
+                end_iso=payload.end_iso,
+                location=payload.location,
+                price_estimate=payload.price_estimate,
+            )
         background_tasks.add_task(
             calendar_events_service.upsert_event,
             uid=result["uid"],
@@ -123,6 +163,26 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
             end_iso=payload.end_iso,
             location=payload.location,
         )
+        owner_mobile, owner_email = _owner_contact(payload.provider)
+        if owner_email:
+            background_tasks.add_task(
+                email_service.send_update_confirmation,
+                uid=payload.uid,
+                summary=payload.summary,
+                start_iso=payload.start_iso,
+                end_iso=payload.end_iso,
+                location=payload.location,
+                email=owner_email,
+            )
+        if owner_mobile:
+            background_tasks.add_task(
+                sms_service.send_update_confirmation,
+                to_number=owner_mobile,
+                summary=payload.summary,
+                start_iso=payload.start_iso,
+                end_iso=payload.end_iso,
+                location=payload.location,
+            )
         background_tasks.add_task(
             calendar_events_service.upsert_event,
             uid=payload.uid,
@@ -150,6 +210,11 @@ def delete_event(payload: DeleteEventRequest, background_tasks: BackgroundTasks)
         result = calendar_service.delete_event(uid=payload.uid, provider=payload.provider)
         background_tasks.add_task(email_service.send_cancellation_confirmation, uid=payload.uid, email=payload.email)
         background_tasks.add_task(sms_service.send_cancellation_confirmation, to_number=payload.phone_number or call_context.get_last_to_number())
+        owner_mobile, owner_email = _owner_contact(payload.provider)
+        if owner_email:
+            background_tasks.add_task(email_service.send_cancellation_confirmation, uid=payload.uid, email=owner_email)
+        if owner_mobile:
+            background_tasks.add_task(sms_service.send_cancellation_confirmation, to_number=owner_mobile)
         background_tasks.add_task(
             calendar_events_service.delete_event,
             uid=payload.uid,
