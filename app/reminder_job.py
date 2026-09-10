@@ -40,6 +40,7 @@ def run_reminder_sweep() -> None:
                 to_number=phone_number,
                 reason="appointment reminder",
                 provider=doc.get("provider") or settings.calendar_provider,
+                purpose="reminder",
             )))
             calendar_events_service.upsert_event(
                 uid=doc["uid"],

@@ -28,12 +28,18 @@ class Settings(BaseSettings):
     google_oauth_redirect_uri: str = "http://localhost:8000/oauth/google/callback"
     frontend_base_url: str = "http://localhost:5173"  # postMessage target origin after OAuth popup completes
 
-    # --- ElevenLabs: one agent per calendar provider, picked at call-trigger time ---
+    # --- ElevenLabs: one booking agent per calendar provider, picked at call-trigger time ---
     elevenlabs_api_key: str
     elevenlabs_google_agent_id: str = ""
     elevenlabs_google_agent_phone_number_id: str = ""
     elevenlabs_apple_agent_id: str = ""
     elevenlabs_apple_agent_phone_number_id: str = ""
+
+    # --- ElevenLabs: separate reminder-call agent per calendar provider ---
+    elevenlabs_reminder_google_agent_id: str = ""
+    elevenlabs_reminder_google_agent_phone_number_id: str = ""
+    elevenlabs_reminder_apple_agent_id: str = ""
+    elevenlabs_reminder_apple_agent_phone_number_id: str = ""
 
     # --- Security for the webhook tool endpoints ElevenLabs will call mid-conversation ---
     tool_webhook_secret: str

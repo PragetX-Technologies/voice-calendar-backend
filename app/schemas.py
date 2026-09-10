@@ -58,3 +58,4 @@ class TriggerCallRequest(BaseModel):
     customer_name: str | None = Field(None, description="Passed to the agent as a dynamic variable")
     reason: str | None = Field(None, description="e.g. 'Follow-up on plumbing quote request', passed as dynamic variable")
     provider: str | None = Field(None, description="'apple' or 'google'; picks which agent places the call. Defaults to CALENDAR_PROVIDER if omitted")
+    purpose: str = Field("booking", description="'booking' (Aura) or 'reminder' (Echo) — picks which of the two agents/phone numbers places the call")
