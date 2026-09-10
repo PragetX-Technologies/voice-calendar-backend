@@ -49,6 +49,17 @@ def get_any_connection(platform: str) -> dict | None:
     return doc
 
 
+def get_any_platform() -> str | None:
+    """
+    Whichever platform this (single) business actually has connected —
+    used to override the ElevenLabs `provider` dynamic variable, which the
+    LLM sometimes gets wrong (e.g. still says "google" after only "apple"
+    was ever connected). Same single-tenant assumption as get_any_connection.
+    """
+    doc = get_db().calendar_connections.find_one({})
+    return doc["platform"] if doc else None
+
+
 def delete_connection(account_id: str, platform: str) -> None:
     get_db().calendar_connections.delete_one({"_id": _doc_id(account_id, platform)})
 

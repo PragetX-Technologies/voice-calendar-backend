@@ -13,7 +13,15 @@ import logging
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 
-from app import business_service, calendar_events_service, call_context, calendar_service, email_service, sms_service
+from app import (
+    business_service,
+    calendar_connections_service,
+    calendar_events_service,
+    call_context,
+    calendar_service,
+    email_service,
+    sms_service,
+)
 from app.config import settings
 from app.schemas import (
     CreateEventRequest,
@@ -33,6 +41,11 @@ def verify_webhook_secret(x_webhook_secret: str = Header(default="")) -> None:
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
 
+def _resolve_provider(payload_provider: str | None) -> str | None:
+    """Single-tenant: trust which platform is actually connected over whatever the agent guessed."""
+    return calendar_connections_service.get_any_platform() or payload_provider
+
+
 def _owner_contact(provider: str | None) -> tuple[str | None, str | None]:
     """(mobile, email) of the business owner, for mirroring customer confirmations to them too."""
     profile = business_service.get_any_profile(provider or settings.calendar_provider)
@@ -44,7 +57,7 @@ def _owner_contact(provider: str | None) -> tuple[str | None, str | None]:
 @router.post("/get-business-hours", dependencies=[Depends(verify_webhook_secret)])
 def get_business_hours(payload: GetBusinessHoursRequest):
     logger.info("get-business-hours payload=%s", payload.model_dump())
-    profile = business_service.get_any_profile(payload.provider or settings.calendar_provider)
+    profile = business_service.get_any_profile(_resolve_provider(payload.provider) or settings.calendar_provider)
     if not profile:
         raise HTTPException(status_code=404, detail="No business profile found for this provider")
     return {"hours": profile.get("hours", {})}
@@ -54,7 +67,7 @@ def get_business_hours(payload: GetBusinessHoursRequest):
 def list_events(payload: ListEventsRequest):
     logger.info("list-events payload=%s", payload.model_dump())
     try:
-        events = calendar_service.list_events(payload.start_iso, payload.end_iso, provider=payload.provider)
+        events = calendar_service.list_events(payload.start_iso, payload.end_iso, provider=_resolve_provider(payload.provider))
         return {"events": events, "count": len(events)}
     except Exception as e:
         logger.exception("list-events failed")
@@ -64,6 +77,7 @@ def list_events(payload: ListEventsRequest):
 @router.post("/create-event", dependencies=[Depends(verify_webhook_secret)])
 def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks):
     logger.info("create-event payload=%s", payload.model_dump())
+    provider = _resolve_provider(payload.provider)
     try:
         result = calendar_service.create_event(
             summary=payload.summary,
@@ -71,7 +85,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
             end_iso=payload.end_iso,
             description=payload.description,
             location=payload.location,
-            provider=payload.provider,
+            provider=provider,
         )
         background_tasks.add_task(
             email_service.send_booking_confirmation,
@@ -92,7 +106,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
             location=payload.location,
             price_estimate=payload.price_estimate,
         )
-        owner_mobile, owner_email = _owner_contact(payload.provider)
+        owner_mobile, owner_email = _owner_contact(provider)
         if owner_email:
             background_tasks.add_task(
                 email_service.send_booking_confirmation,
@@ -117,7 +131,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
         background_tasks.add_task(
             calendar_events_service.upsert_event,
             uid=result["uid"],
-            provider=payload.provider or settings.calendar_provider,
+            provider=provider or settings.calendar_provider,
             summary=payload.summary,
             start=payload.start_iso,
             end=payload.end_iso,
@@ -136,6 +150,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
 @router.post("/update-event", dependencies=[Depends(verify_webhook_secret)])
 def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks):
     logger.info("update-event payload=%s", payload.model_dump())
+    provider = _resolve_provider(payload.provider)
     try:
         result = calendar_service.update_event(
             uid=payload.uid,
@@ -144,7 +159,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
             end_iso=payload.end_iso,
             description=payload.description,
             location=payload.location,
-            provider=payload.provider,
+            provider=provider,
         )
         background_tasks.add_task(
             email_service.send_update_confirmation,
@@ -163,7 +178,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
             end_iso=payload.end_iso,
             location=payload.location,
         )
-        owner_mobile, owner_email = _owner_contact(payload.provider)
+        owner_mobile, owner_email = _owner_contact(provider)
         if owner_email:
             background_tasks.add_task(
                 email_service.send_update_confirmation,
@@ -186,7 +201,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
         background_tasks.add_task(
             calendar_events_service.upsert_event,
             uid=payload.uid,
-            provider=payload.provider or settings.calendar_provider,
+            provider=provider or settings.calendar_provider,
             summary=payload.summary,
             start=payload.start_iso,
             end=payload.end_iso,
@@ -206,11 +221,12 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
 @router.post("/delete-event", dependencies=[Depends(verify_webhook_secret)])
 def delete_event(payload: DeleteEventRequest, background_tasks: BackgroundTasks):
     logger.info("delete-event payload=%s", payload.model_dump())
+    provider = _resolve_provider(payload.provider)
     try:
-        result = calendar_service.delete_event(uid=payload.uid, provider=payload.provider)
+        result = calendar_service.delete_event(uid=payload.uid, provider=provider)
         background_tasks.add_task(email_service.send_cancellation_confirmation, uid=payload.uid, email=payload.email)
         background_tasks.add_task(sms_service.send_cancellation_confirmation, to_number=payload.phone_number or call_context.get_last_to_number())
-        owner_mobile, owner_email = _owner_contact(payload.provider)
+        owner_mobile, owner_email = _owner_contact(provider)
         if owner_email:
             background_tasks.add_task(email_service.send_cancellation_confirmation, uid=payload.uid, email=owner_email)
         if owner_mobile:
@@ -218,7 +234,7 @@ def delete_event(payload: DeleteEventRequest, background_tasks: BackgroundTasks)
         background_tasks.add_task(
             calendar_events_service.delete_event,
             uid=payload.uid,
-            provider=payload.provider or settings.calendar_provider,
+            provider=provider or settings.calendar_provider,
         )
         return result
     except ValueError as e:
