@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     smtp_port: int = 587
     google_sender_id: str = ""  # e.g. someone@gmail.com
     google_sender_app_specific_password: str = ""  # generated at myaccount.google.com/apppasswords
-    booking_notification_email: str = ""  # hardcoded recipient (the customer/receiver)
+    user_email: str = ""  # caller's confirmation email — hardcoded here, agent no longer asks for it on the call
 
     # --- Booking confirmation SMS (sent via Twilio) ---
     twilio_account_sid: str = ""

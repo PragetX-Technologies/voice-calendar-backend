@@ -34,7 +34,7 @@ def _parse_dt(value: str) -> datetime:
     return dt
 
 
-def _build_ics(uid: str, summary: str, start_iso: str, end_iso: str, location: str = "", method: str = "REQUEST", status: str = "CONFIRMED") -> bytes:
+def _build_ics(uid: str, summary: str, start_iso: str, end_iso: str, location: str = "", method: str = "REQUEST", status: str = "CONFIRMED", attendee_email: str | None = None) -> bytes:
     """Builds a .ics invite so mail clients offer an 'Add to Calendar' action."""
     ical = ICalendar()
     ical.add("prodid", "-//Voice Calendar Agent//EN")
@@ -51,14 +51,14 @@ def _build_ics(uid: str, summary: str, start_iso: str, end_iso: str, location: s
     if location:
         vevent.add("location", location)
     vevent.add("organizer", f"mailto:{settings.google_sender_id}")
-    vevent.add("attendee", f"mailto:{settings.booking_notification_email}")
+    if attendee_email:
+        vevent.add("attendee", f"mailto:{attendee_email}")
 
     ical.add_component(vevent)
     return ical.to_ical()
 
 
 def _send(subject: str, body: str, to_email: str | None = None, ics_bytes: bytes | None = None, ics_method: str = "REQUEST") -> None:
-    to_email = to_email or settings.booking_notification_email
     if not to_email:
         return
     try:
@@ -105,7 +105,7 @@ def send_booking_confirmation(uid: str, summary: str, start_iso: str, end_iso: s
     )
     if price_estimate:
         body += f"Estimated cost: {price_estimate} (technician confirms final price on site)\n"
-    ics = _build_ics(uid, summary, start_iso, end_iso, location, method="REQUEST", status="CONFIRMED")
+    ics = _build_ics(uid, summary, start_iso, end_iso, location, method="REQUEST", status="CONFIRMED", attendee_email=email)
     _send("Booking Confirmation", body, to_email=email, ics_bytes=ics, ics_method="REQUEST")
 
 
@@ -120,7 +120,7 @@ def send_update_confirmation(uid: str, summary: str | None, start_iso: str | Non
     )
     ics = None
     if summary and start_iso and end_iso:
-        ics = _build_ics(uid, summary, start_iso, end_iso, location or "", method="REQUEST", status="CONFIRMED")
+        ics = _build_ics(uid, summary, start_iso, end_iso, location or "", method="REQUEST", status="CONFIRMED", attendee_email=email)
     _send("Booking Update Confirmation", body, to_email=email, ics_bytes=ics, ics_method="REQUEST")
 
 

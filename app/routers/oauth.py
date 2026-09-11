@@ -103,6 +103,9 @@ def google_callback(code: str = Query(...), state: str = Query(...)):
     if account_id is None:
         return _popup_response(ok=False, platform="google", error="Invalid or expired OAuth state")
 
+    if connections.get_connection(account_id, "apple") is not None:
+        return _popup_response(ok=False, platform="google", error="Apple Calendar is already connected — disconnect it first, then connect Google.")
+
     try:
         flow = _google_flow()
         flow.fetch_token(code=code)
@@ -133,6 +136,8 @@ class AppleConnectBody(BaseModel):
 
 @router.post("/apple/connect")
 def apple_connect(payload: AppleConnectBody, account_id: str = Depends(require_account_id)):
+    if connections.get_connection(account_id, "google") is not None:
+        raise HTTPException(status_code=400, detail="Google Calendar is already connected — disconnect it first, then connect Apple.")
     try:
         client = caldav.DAVClient(
             url=settings.apple_caldav_url,
