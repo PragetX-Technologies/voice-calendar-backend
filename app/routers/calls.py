@@ -44,6 +44,12 @@ async def trigger_call(payload: TriggerCallRequest):
         dynamic_variables["customer_name"] = payload.customer_name
     if payload.reason:
         dynamic_variables["reason"] = payload.reason
+    if payload.appointment_uid:
+        dynamic_variables["appointment_uid"] = payload.appointment_uid
+    if payload.appointment_summary:
+        dynamic_variables["appointment_summary"] = payload.appointment_summary
+    if payload.appointment_time:
+        dynamic_variables["appointment_time"] = payload.appointment_time
 
     body = {
         "agent_id": agent_id,

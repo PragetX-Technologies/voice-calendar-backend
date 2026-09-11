@@ -9,6 +9,8 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 
+from zoneinfo import ZoneInfo
+
 from app import calendar_events_service
 from app.config import settings
 from app.db import get_db
@@ -18,6 +20,16 @@ from app.schemas import TriggerCallRequest
 logger = logging.getLogger("reminder_job")
 
 REMINDER_LOOKAHEAD_HOURS = 24
+
+
+def _format_appointment_time(start_iso: str) -> str:
+    """e.g. 'Thursday, February 12 at 2:30 PM' — spoken by the agent in its opening line."""
+    dt = datetime.fromisoformat(start_iso)
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=ZoneInfo(settings.default_timezone))
+    # ponytail: strips leading zero from day-of-month and hour via a space-prefixed "0" —
+    # %-d/%#d aren't portable across platform strftime implementations, this is.
+    return dt.strftime("%A, %B %d at %I:%M %p").replace(" 0", " ")
 
 
 def run_reminder_sweep() -> None:
@@ -41,6 +53,9 @@ def run_reminder_sweep() -> None:
                 reason="appointment reminder",
                 provider=doc.get("provider") or settings.calendar_provider,
                 purpose="reminder",
+                appointment_uid=doc.get("uid"),
+                appointment_summary=doc.get("summary"),
+                appointment_time=_format_appointment_time(doc["start"]),
             )))
             calendar_events_service.upsert_event(
                 uid=doc["uid"],

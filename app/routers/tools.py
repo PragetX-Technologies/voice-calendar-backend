@@ -56,6 +56,22 @@ def _owner_contact(provider: str | None) -> tuple[str | None, str | None]:
     return profile.get("mobile"), profile.get("email")
 
 
+_ADDRESS_FIELDS = ("address_line", "unit_type", "unit_number", "city", "state", "zip")
+
+
+def _build_location_string(address_line: str, unit_type: str, unit_number: str, city: str, state: str, zip_code: str) -> str:
+    """Single-line address for the actual calendar event (CalDAV LOCATION / Google Calendar `location` only accept one string)."""
+    unit = f"{unit_type} {unit_number}".strip() if unit_number else unit_type
+    return ", ".join(p for p in (address_line, unit, city, state, zip_code) if p)
+
+
+def _build_location_array(payload) -> list[str] | None:
+    """[address_line, unit_type, unit_number, city, state, zip] for the calendar_events Mongo cache — None if the caller sent no address fields at all (so an update leaves the cached address untouched)."""
+    if all(getattr(payload, f) is None for f in _ADDRESS_FIELDS):
+        return None
+    return [getattr(payload, f) or "" for f in _ADDRESS_FIELDS]
+
+
 @router.post("/get-business-hours", dependencies=[Depends(verify_webhook_secret)])
 def get_business_hours(payload: GetBusinessHoursRequest):
     logger.info("get-business-hours payload=%s", payload.model_dump())
@@ -85,13 +101,14 @@ def list_events(payload: ListEventsRequest):
 def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks):
     logger.info("create-event payload=%s", payload.model_dump())
     provider = _resolve_provider(payload.provider)
+    location_str = _build_location_string(payload.address_line, payload.unit_type, payload.unit_number, payload.city, payload.state, payload.zip)
     try:
         result = calendar_service.create_event(
             summary=payload.summary,
             start_iso=payload.start_iso,
             end_iso=payload.end_iso,
             description=payload.description,
-            location=payload.location,
+            location=location_str,
             provider=provider,
         )
         background_tasks.add_task(
@@ -100,7 +117,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
             summary=payload.summary,
             start_iso=payload.start_iso,
             end_iso=payload.end_iso,
-            location=payload.location,
+            location=location_str,
             price_estimate=payload.price_estimate,
             email=settings.user_email,  # caller no longer asked for email; hardcoded via USER_EMAIL env var
         )
@@ -110,7 +127,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
             summary=payload.summary,
             start_iso=payload.start_iso,
             end_iso=payload.end_iso,
-            location=payload.location,
+            location=location_str,
             price_estimate=payload.price_estimate,
         )
         owner_mobile, owner_email = _owner_contact(provider)
@@ -121,7 +138,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
                 summary=payload.summary,
                 start_iso=payload.start_iso,
                 end_iso=payload.end_iso,
-                location=payload.location,
+                location=location_str,
                 price_estimate=payload.price_estimate,
                 email=owner_email,
             )
@@ -132,7 +149,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
                 summary=payload.summary,
                 start_iso=payload.start_iso,
                 end_iso=payload.end_iso,
-                location=payload.location,
+                location=location_str,
                 price_estimate=payload.price_estimate,
             )
         background_tasks.add_task(
@@ -142,7 +159,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
             summary=payload.summary,
             start=payload.start_iso,
             end=payload.end_iso,
-            location=payload.location,
+            location=_build_location_array(payload),  # [address_line, unit_type, unit_number, city, state, zip]
             description=payload.description,
             phone_number=payload.phone_number or call_context.get_last_to_number(),
             email=settings.user_email,  # caller no longer asked for email; hardcoded via USER_EMAIL env var
@@ -158,6 +175,9 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
 def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks):
     logger.info("update-event payload=%s", payload.model_dump())
     provider = _resolve_provider(payload.provider)
+    location_array = _build_location_array(payload)
+    # only build a location string (and touch the calendar event's location) if the caller actually sent an address field
+    location_str = _build_location_string(payload.address_line or "", payload.unit_type or "", payload.unit_number or "", payload.city or "", payload.state or "", payload.zip or "") if location_array is not None else None
     try:
         result = calendar_service.update_event(
             uid=payload.uid,
@@ -165,7 +185,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
             start_iso=payload.start_iso,
             end_iso=payload.end_iso,
             description=payload.description,
-            location=payload.location,
+            location=location_str,
             provider=provider,
         )
         background_tasks.add_task(
@@ -174,7 +194,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
             summary=payload.summary,
             start_iso=payload.start_iso,
             end_iso=payload.end_iso,
-            location=payload.location,
+            location=location_str,
             email=settings.user_email,  # caller no longer asked for email; hardcoded via USER_EMAIL env var
         )
         background_tasks.add_task(
@@ -183,7 +203,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
             summary=payload.summary,
             start_iso=payload.start_iso,
             end_iso=payload.end_iso,
-            location=payload.location,
+            location=location_str,
         )
         owner_mobile, owner_email = _owner_contact(provider)
         if owner_email:
@@ -193,7 +213,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
                 summary=payload.summary,
                 start_iso=payload.start_iso,
                 end_iso=payload.end_iso,
-                location=payload.location,
+                location=location_str,
                 email=owner_email,
             )
         if owner_mobile:
@@ -203,7 +223,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
                 summary=payload.summary,
                 start_iso=payload.start_iso,
                 end_iso=payload.end_iso,
-                location=payload.location,
+                location=location_str,
             )
         background_tasks.add_task(
             calendar_events_service.upsert_event,
@@ -212,7 +232,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
             summary=payload.summary,
             start=payload.start_iso,
             end=payload.end_iso,
-            location=payload.location,
+            location=location_array,  # [address_line, unit_type, unit_number, city, state, zip], or None if unchanged
             description=payload.description,
             email=settings.user_email,  # caller no longer asked for email; hardcoded via USER_EMAIL env var
         )

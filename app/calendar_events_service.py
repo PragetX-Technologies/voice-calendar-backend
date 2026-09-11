@@ -8,6 +8,7 @@ that already existed before this cache was introduced.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
 
 from app import caldav_service, google_calendar_service
 from app.db import get_db
@@ -50,6 +51,22 @@ def upsert_event(
 
 def delete_event(uid: str, provider: str, account: str = "user", business_account_id: str | None = None) -> None:
     get_db().calendar_events.delete_one({"_id": _doc_id(business_account_id, account, provider, uid)})
+
+
+def list_pending_reminders(hours_ahead: int | None = None) -> list[dict]:
+    """
+    Cached events not yet reminder-called (same "reminder_sent != True" query
+    run_reminder_sweep() uses), for the dashboard to show what's still pending.
+    hours_ahead, if given, restricts to events starting within that window from now.
+    """
+    query = {"reminder_sent": {"$ne": True}}
+    if hours_ahead is not None:
+        now = datetime.now()
+        query["start"] = {"$gte": now.isoformat(), "$lte": (now + timedelta(hours=hours_ahead)).isoformat()}
+    docs = list(get_db().calendar_events.find(query).sort("start", 1))
+    for doc in docs:
+        doc["id"] = doc.pop("_id")
+    return docs
 
 
 def sync_range(

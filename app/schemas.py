@@ -25,7 +25,12 @@ class CreateEventRequest(BaseModel):
     start_iso: str = Field(..., description="Appointment start, ISO 8601, e.g. 2026-07-25T14:00:00")
     end_iso: str = Field(..., description="Appointment end, ISO 8601, e.g. 2026-07-25T15:00:00")
     description: str = Field("", description="Extra notes, e.g. issue details")
-    location: str = Field("", description="Address or location of the appointment")
+    address_line: str = Field("", description="Street address")
+    unit_type: str = Field("", description="'House' or 'Apartment'")
+    unit_number: str = Field("", description="Apartment/unit number, only set when unit_type is 'Apartment'")
+    city: str = Field("", description="City")
+    state: str = Field("", description="State")
+    zip: str = Field("", description="ZIP/postal code")
     provider: str | None = Field(None, description=_PROVIDER_DESC)
     phone_number: str | None = Field(None, description="Caller's phone number (dynamic variable from call trigger), used as SMS recipient")
     email: str | None = Field(None, description="Unused — email now hardcoded server-side via settings.user_email; agent no longer collects it")
@@ -38,7 +43,12 @@ class UpdateEventRequest(BaseModel):
     start_iso: str | None = None
     end_iso: str | None = None
     description: str | None = None
-    location: str | None = None
+    address_line: str | None = Field(None, description="New street address, only if changing")
+    unit_type: str | None = Field(None, description="New 'House' or 'Apartment', only if changing")
+    unit_number: str | None = Field(None, description="New apartment/unit number, only if changing")
+    city: str | None = Field(None, description="New city, only if changing")
+    state: str | None = Field(None, description="New state, only if changing")
+    zip: str | None = Field(None, description="New ZIP/postal code, only if changing")
     provider: str | None = Field(None, description=_PROVIDER_DESC)
     phone_number: str | None = Field(None, description="Caller's phone number (dynamic variable from call trigger), used as SMS recipient")
     email: str | None = Field(None, description="Unused — email now hardcoded server-side via settings.user_email; agent no longer collects it")
@@ -59,3 +69,6 @@ class TriggerCallRequest(BaseModel):
     reason: str | None = Field(None, description="e.g. 'Follow-up on plumbing quote request', passed as dynamic variable")
     provider: str | None = Field(None, description="'apple' or 'google'; picks which agent places the call. Defaults to CALENDAR_PROVIDER if omitted")
     purpose: str = Field("booking", description="'booking' (Aura) or 'reminder' (Echo) — picks which of the two agents/phone numbers places the call")
+    appointment_uid: str | None = Field(None, description="Reminder calls only: the specific appointment this call is about, passed as the {{appointment_uid}} dynamic variable so the agent doesn't have to guess which upcoming appointment to discuss")
+    appointment_summary: str | None = Field(None, description="Reminder calls only: the appointment's title, passed as {{appointment_summary}} for the agent's opening line")
+    appointment_time: str | None = Field(None, description="Reminder calls only: the appointment's start time, pre-formatted for speech, passed as {{appointment_time}} for the agent's opening line")

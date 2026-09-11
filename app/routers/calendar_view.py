@@ -63,6 +63,15 @@ def get_events(
         raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}")
 
 
+@router.get("/pending-reminders")
+def get_pending_reminders(
+    hours_ahead: int | None = Query(None, description="Restrict to events starting within this many hours from now; omit for all pending"),
+    account_id: str = Depends(require_account_id),
+):
+    events = calendar_events_service.list_pending_reminders(hours_ahead=hours_ahead)
+    return {"events": events, "count": len(events)}
+
+
 @router.post("/events")
 def create_event(
     payload: CreateEventBody,
