@@ -50,7 +50,7 @@ def _resolve_provider(payload_provider: str | None) -> str | None:
 
 def _owner_contact(provider: str | None) -> tuple[str | None, str | None]:
     """(mobile, email) of the business owner, for mirroring customer confirmations to them too."""
-    profile = business_service.get_any_profile(provider or settings.calendar_provider)
+    profile = business_service.get_any_profile(provider or calendar_connections_service.get_any_platform() or settings.calendar_provider)
     if not profile:
         return None, None
     return profile.get("mobile"), profile.get("email")

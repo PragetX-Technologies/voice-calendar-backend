@@ -25,15 +25,17 @@ class Settings(BaseSettings):
     google_calendar_id: str = "primary"
 
     # --- Google OAuth (business "Connect Google Calendar" flow, app/routers/oauth.py) ---
+    # Separate Web-application OAuth client from google_client_id/secret above
+    # (that one is a Desktop client, only valid for the InstalledAppFlow refresh-token script).
+    google_oauth_client_id: str = ""
+    google_oauth_client_secret: str = ""
     google_oauth_redirect_uri: str = "http://localhost:8000/oauth/google/callback"
     frontend_base_url: str = "http://localhost:5173"  # postMessage target origin after OAuth popup completes
 
-    # --- ElevenLabs: one booking agent per calendar provider, picked at call-trigger time ---
+    # --- ElevenLabs: one booking agent (Aura), regardless of calendar provider ---
     elevenlabs_api_key: str
-    elevenlabs_google_agent_id: str = ""
-    elevenlabs_google_agent_phone_number_id: str = ""
-    elevenlabs_apple_agent_id: str = ""
-    elevenlabs_apple_agent_phone_number_id: str = ""
+    elevenlabs_agent_id: str = ""
+    elevenlabs_agent_phone_number_id: str = ""
 
     # --- ElevenLabs: one reminder-call agent (Echo), regardless of calendar provider ---
     elevenlabs_reminder_agent_id: str = ""

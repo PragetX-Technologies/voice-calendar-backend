@@ -1,11 +1,13 @@
 """
 Dispatches to a calendar backend (Apple CalDAV or Google Calendar). Each call
 can pass provider="apple"|"google" explicitly (used when multiple ElevenLabs
-agents share this backend, one per provider); falls back to
-settings.calendar_provider if omitted. Both backends expose the same
+agents share this backend, one per provider); falls back to whichever
+platform the business owner actually has connected
+(calendar_connections_service.get_any_platform()), then settings.calendar_provider
+as a last resort before any connection exists. Both backends expose the same
 list_events / create_event / update_event / delete_event functions.
 """
-from app import caldav_service, google_calendar_service
+from app import caldav_service, calendar_connections_service, google_calendar_service
 from app.config import settings
 
 _PROVIDERS = {
@@ -15,7 +17,7 @@ _PROVIDERS = {
 
 
 def _active(provider: str | None):
-    provider = provider or settings.calendar_provider
+    provider = provider or calendar_connections_service.get_any_platform() or settings.calendar_provider
     try:
         return _PROVIDERS[provider]
     except KeyError:

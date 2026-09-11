@@ -8,7 +8,7 @@ linked to your agent (Phone Numbers tab in ElevenLabs dashboard).
 import httpx
 from fastapi import APIRouter, HTTPException
 
-from app import call_context
+from app import calendar_connections_service, call_context
 from app.config import settings
 from app.schemas import TriggerCallRequest
 from app.sms_service import _to_e164
@@ -17,22 +17,15 @@ router = APIRouter(prefix="/calls", tags=["call-trigger"])
 
 ELEVENLABS_OUTBOUND_CALL_URL = "https://api.elevenlabs.io/v1/convai/twilio/outbound_call"
 
-_BOOKING_AGENTS = {
-    "google": (settings.elevenlabs_google_agent_id, settings.elevenlabs_google_agent_phone_number_id),
-    "apple": (settings.elevenlabs_apple_agent_id, settings.elevenlabs_apple_agent_phone_number_id),
-}
-
 
 @router.post("/trigger")
 async def trigger_call(payload: TriggerCallRequest):
-    provider = payload.provider or settings.calendar_provider
+    provider = payload.provider or calendar_connections_service.get_any_platform() or settings.calendar_provider
 
     if payload.purpose == "reminder":
         agent_id, agent_phone_number_id = settings.elevenlabs_reminder_agent_id, settings.elevenlabs_reminder_agent_phone_number_id
     elif payload.purpose == "booking":
-        if provider not in _BOOKING_AGENTS:
-            raise HTTPException(status_code=400, detail=f"Unknown provider '{provider}', expected one of {list(_BOOKING_AGENTS)}")
-        agent_id, agent_phone_number_id = _BOOKING_AGENTS[provider]
+        agent_id, agent_phone_number_id = settings.elevenlabs_agent_id, settings.elevenlabs_agent_phone_number_id
     else:
         raise HTTPException(status_code=400, detail="Unknown purpose, expected 'booking' or 'reminder'")
 

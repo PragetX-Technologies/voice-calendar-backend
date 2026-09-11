@@ -51,8 +51,8 @@ def _google_flow() -> Flow:
     return Flow.from_client_config(
         {
             "web": {
-                "client_id": settings.google_client_id,
-                "client_secret": settings.google_client_secret,
+                "client_id": settings.google_oauth_client_id,
+                "client_secret": settings.google_oauth_client_secret,
                 "auth_uri": "https://accounts.google.com/o/oauth2/auth",
                 "token_uri": "https://oauth2.googleapis.com/token",
                 "redirect_uris": [settings.google_oauth_redirect_uri],
@@ -80,8 +80,8 @@ def _popup_response(ok: bool, platform: str, account: str | None = None, error: 
 
 @router.get("/google/authorize")
 def google_authorize(token: str = Query(..., description="Business account's JWT access token")):
-    if not settings.google_client_id or not settings.google_client_secret:
-        raise HTTPException(status_code=500, detail="Google OAuth is not configured (GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET missing)")
+    if not settings.google_oauth_client_id or not settings.google_oauth_client_secret:
+        raise HTTPException(status_code=500, detail="Google OAuth is not configured (GOOGLE_OAUTH_CLIENT_ID/GOOGLE_OAUTH_CLIENT_SECRET missing)")
 
     account_id = decode_account_id(token)
 

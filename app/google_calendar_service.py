@@ -46,19 +46,24 @@ def _get_service(account: str = "user", business_account_id: str | None = None):
     key = _client_cache_key(account, business_account_id)
     if key not in _services:
         if account == "user":
+            # Minted by scripts/google_oauth_setup.py against the Desktop OAuth client.
             refresh_token = settings.google_refresh_token
+            client_id, client_secret = settings.google_client_id, settings.google_client_secret
         else:
+            # Minted by app/routers/oauth.py's popup flow against the Web OAuth client —
+            # refreshing it with the Desktop client's id/secret fails with unauthorized_client.
             conn = _resolve_provider_connection(business_account_id)
             if conn is None:
                 raise RuntimeError("Google Calendar isn't connected for any business yet. Connect it from Settings.")
             refresh_token = conn["refresh_token"]
+            client_id, client_secret = settings.google_oauth_client_id, settings.google_oauth_client_secret
 
         creds = Credentials(
             token=None,
             refresh_token=refresh_token,
             token_uri="https://oauth2.googleapis.com/token",
-            client_id=settings.google_client_id,
-            client_secret=settings.google_client_secret,
+            client_id=client_id,
+            client_secret=client_secret,
             scopes=["https://www.googleapis.com/auth/calendar"],
         )
         _services[key] = build("calendar", "v3", credentials=creds)
