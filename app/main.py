@@ -15,7 +15,7 @@ scheduler = BackgroundScheduler()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    scheduler.add_job(run_reminder_sweep, "interval", minutes=15, id="reminder_sweep")
+    scheduler.add_job(run_reminder_sweep, "interval", minutes=30, id="reminder_sweep")
     scheduler.start()
     yield
     scheduler.shutdown()
