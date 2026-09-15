@@ -1,7 +1,7 @@
 .env
 .env.example
 venv
-apple_calendar_voice_agent_tools.md
 scripts/client_secret.json
 app/__pycache__
 app/routers/__pycache__
+scripts/__pycache__
