@@ -1,19 +1,25 @@
 """
-Single hardcoded business owner account (OWNER_USERNAME/OWNER_PASSWORD in
-.env). No signup, no accounts DB — one account, id fixed as "owner".
+Business owner accounts, collection "accounts" in MongoDB — each business
+owner has their own account (email + bcrypt-hashed password), scoped to
+their own account id everywhere via require_account_id. Seed/update accounts
+with scripts/seed_accounts.py; no signup endpoint.
 """
-from app.config import settings
+import bcrypt
 
-OWNER_ACCOUNT_ID = "owner"
+from app.db import get_db
 
 
 def authenticate(username: str, password: str) -> dict | None:
-    if username != settings.owner_username or password != settings.owner_password:
+    doc = get_db().accounts.find_one({"email": username})
+    if doc is None:
         return None
-    return {"_id": OWNER_ACCOUNT_ID, "email": settings.owner_username}
+    if not bcrypt.checkpw(password.encode("utf-8"), doc["password_hash"].encode("utf-8")):
+        return None
+    return {"_id": doc["_id"], "email": doc["email"]}
 
 
 def get_account(account_id: str) -> dict | None:
-    if account_id != OWNER_ACCOUNT_ID:
+    doc = get_db().accounts.find_one({"_id": account_id})
+    if doc is None:
         return None
-    return {"_id": OWNER_ACCOUNT_ID, "email": settings.owner_username}
+    return {"_id": doc["_id"], "email": doc["email"]}

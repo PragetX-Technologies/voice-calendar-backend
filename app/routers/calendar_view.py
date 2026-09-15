@@ -68,7 +68,7 @@ def get_pending_reminders(
     hours_ahead: int | None = Query(None, description="Restrict to events starting within this many hours from now; omit for all pending"),
     account_id: str = Depends(require_account_id),
 ):
-    events = calendar_events_service.list_pending_reminders(hours_ahead=hours_ahead)
+    events = calendar_events_service.list_pending_reminders(account_id, hours_ahead=hours_ahead)
     return {"events": events, "count": len(events)}
 
 

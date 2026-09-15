@@ -3,7 +3,6 @@ Business (plumber) profile storage in MongoDB, collection "business_profiles",
 keyed by the owning account's id (app/accounts_service.py).
 """
 from app import calendar_connections_service
-from app.accounts_service import OWNER_ACCOUNT_ID
 from app.business_schemas import BusinessProfile
 from app.db import get_db
 
@@ -16,13 +15,13 @@ def get_profile(account_id: str) -> dict | None:
     return doc
 
 
-def get_any_profile(provider: str | None = None) -> dict | None:
+def get_any_profile(account_id: str | None) -> dict | None:
     """
-    Fallback for the ElevenLabs webhook path (no account_id, shared-secret
-    call only). Only one account exists (OWNER_ACCOUNT_ID), so look it up
-    directly. `provider` kept for call-site compatibility, unused.
+    ElevenLabs webhook path lookup (no signed-in session) — account_id comes
+    from app.call_context, set when the call was triggered, not from the
+    shared-secret request itself.
     """
-    return get_profile(OWNER_ACCOUNT_ID)
+    return get_profile(account_id) if account_id else None
 
 
 def save_profile(account_id: str, profile: BusinessProfile) -> dict:

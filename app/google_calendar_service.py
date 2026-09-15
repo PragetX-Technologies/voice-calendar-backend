@@ -39,7 +39,7 @@ def _resolve_provider_connection(business_account_id: str | None) -> dict | None
         conn = calendar_connections_service.get_connection(business_account_id, "google")
         if conn is not None:
             return conn
-    return calendar_connections_service.get_any_connection("google")
+    return calendar_connections_service.get_any_connection(business_account_id, "google")
 
 
 def _get_service(account: str = "user", business_account_id: str | None = None):

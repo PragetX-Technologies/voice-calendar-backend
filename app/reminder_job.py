@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 from app import calendar_events_service
 from app.config import settings
 from app.db import get_db
-from app.routers.calls import trigger_call
+from app.routers.calls import trigger_call_for_account
 from app.schemas import TriggerCallRequest
 
 logger = logging.getLogger("reminder_job")
@@ -47,8 +47,12 @@ def run_reminder_sweep() -> None:
         if not phone_number:
             logger.warning("reminder_job: skipping uid=%s, no phone_number on record", doc.get("uid"))
             continue
+        account_id = doc.get("business_account_id")
+        if not account_id:
+            logger.warning("reminder_job: skipping uid=%s, no business_account_id on record", doc.get("uid"))
+            continue
         try:
-            asyncio.run(trigger_call(TriggerCallRequest(
+            asyncio.run(trigger_call_for_account(TriggerCallRequest(
                 to_number=phone_number,
                 reason="appointment reminder",
                 provider=doc.get("provider") or settings.calendar_provider,
@@ -56,7 +60,7 @@ def run_reminder_sweep() -> None:
                 appointment_uid=doc.get("uid"),
                 appointment_summary=doc.get("summary"),
                 appointment_time=_format_appointment_time(doc["start"]),
-            )))
+            ), account_id))
             calendar_events_service.upsert_event(
                 uid=doc["uid"],
                 provider=doc["provider"],
@@ -74,9 +78,10 @@ def _demo() -> None:
 
     now = datetime.now()
     fake_docs = [
-        {"uid": "a", "provider": "google", "start": (now + timedelta(hours=1)).isoformat(), "phone_number": "+15550001"},
-        {"uid": "b", "provider": "google", "start": (now + timedelta(hours=2)).isoformat(), "phone_number": None},
-        {"uid": "c", "provider": "google", "start": (now + timedelta(hours=48)).isoformat(), "phone_number": "+15550002"},
+        {"uid": "a", "provider": "google", "start": (now + timedelta(hours=1)).isoformat(), "phone_number": "+15550001", "business_account_id": "plumber1@business.com"},
+        {"uid": "b", "provider": "google", "start": (now + timedelta(hours=2)).isoformat(), "phone_number": None, "business_account_id": "plumber1@business.com"},
+        {"uid": "c", "provider": "google", "start": (now + timedelta(hours=48)).isoformat(), "phone_number": "+15550002", "business_account_id": "plumber1@business.com"},
+        {"uid": "d", "provider": "google", "start": (now + timedelta(hours=1)).isoformat(), "phone_number": "+15550003", "business_account_id": None},
     ]
 
     class FakeCollection:
@@ -88,15 +93,15 @@ def _demo() -> None:
 
     triggered, upserted = [], []
 
-    async def fake_trigger_call(payload):
-        triggered.append(payload.to_number)
+    async def fake_trigger_call(payload, account_id):
+        triggered.append((payload.to_number, account_id))
 
     with patch("app.reminder_job.get_db", return_value=FakeDb()), \
-         patch("app.reminder_job.trigger_call", new=fake_trigger_call), \
+         patch("app.reminder_job.trigger_call_for_account", new=fake_trigger_call), \
          patch("app.calendar_events_service.upsert_event", side_effect=lambda **kw: upserted.append(kw["uid"])):
         run_reminder_sweep()
 
-    assert triggered == ["+15550001"], f"expected only doc 'a' (in window, has phone) to be called, got {triggered}"
+    assert triggered == [("+15550001", "plumber1@business.com")], f"expected only doc 'a' (in window, has phone+account) to be called, got {triggered}"
     assert upserted == ["a"], f"expected only doc 'a' marked reminder_sent, got {upserted}"
     print("reminder_job self-check passed")
 

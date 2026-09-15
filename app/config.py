@@ -62,9 +62,7 @@ class Settings(BaseSettings):
     mongodb_uri: str = "mongodb://localhost:27017"
     mongodb_db_name: str = "voice_calendar"
 
-    # --- Business owner auth (single hardcoded account, JWT bearer tokens) ---
-    owner_username: str
-    owner_password: str
+    # --- Business owner auth (accounts collection in Mongo, JWT bearer tokens) ---
     jwt_secret: str
     jwt_expire_minutes: int = 60 * 24 * 7  # 7 days
 

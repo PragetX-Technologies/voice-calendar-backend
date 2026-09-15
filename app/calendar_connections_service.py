@@ -7,7 +7,6 @@ the business profile GET/PUT the frontend uses.
 # ponytail: secrets stored as plaintext, same as GOOGLE_REFRESH_TOKEN /
 # APPLE_APP_SPECIFIC_PASSWORD already are in .env; encrypt-at-rest later.
 """
-from app.accounts_service import OWNER_ACCOUNT_ID
 from app.db import get_db
 
 PLATFORMS = ("google", "apple")
@@ -33,25 +32,26 @@ def get_connection(account_id: str, platform: str) -> dict | None:
     return doc
 
 
-def get_any_connection(platform: str) -> dict | None:
+def get_any_connection(account_id: str | None, platform: str) -> dict | None:
     """
-    Fallback for callers with no account context (the ElevenLabs webhook
-    path — a shared-secret call, not a signed-in session). Only one account
-    exists (OWNER_ACCOUNT_ID, see accounts_service), so look it up directly
-    instead of guessing "whichever business has this platform connected" —
-    that guess could return a stale doc left over from an old account id.
+    ElevenLabs webhook path lookup (no signed-in session) — account_id comes
+    from app.call_context, set when the call was triggered. Never guess
+    "whichever business has this platform connected" across multiple
+    accounts — that can return the wrong business's secret.
     """
-    return get_connection(OWNER_ACCOUNT_ID, platform)
+    return get_connection(account_id, platform) if account_id else None
 
 
-def get_any_platform() -> str | None:
+def get_any_platform(account_id: str | None) -> str | None:
     """
-    Whichever platform the owner account actually has connected — used to
-    override the ElevenLabs `provider` dynamic variable, which the LLM
+    Whichever platform this business account actually has connected — used
+    to override the ElevenLabs `provider` dynamic variable, which the LLM
     sometimes gets wrong (e.g. still says "google" after only "apple" was
-    ever connected).
+    ever connected). account_id comes from app.call_context.
     """
-    doc = get_db().calendar_connections.find_one({"account_id": OWNER_ACCOUNT_ID})
+    if not account_id:
+        return None
+    doc = get_db().calendar_connections.find_one({"account_id": account_id})
     return doc["platform"] if doc else None
 
 

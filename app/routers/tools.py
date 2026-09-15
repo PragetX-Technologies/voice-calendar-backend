@@ -44,13 +44,13 @@ def verify_webhook_secret(x_webhook_secret: str = Header(default="")) -> None:
 
 
 def _resolve_provider(payload_provider: str | None) -> str | None:
-    """Single-tenant: trust which platform is actually connected over whatever the agent guessed."""
-    return calendar_connections_service.get_any_platform() or payload_provider
+    """Trust which platform this business actually has connected over whatever the agent guessed."""
+    return calendar_connections_service.get_any_platform(call_context.get_last_account_id()) or payload_provider
 
 
 def _owner_contact(provider: str | None) -> tuple[str | None, str | None]:
     """(mobile, email) of the business owner, for mirroring customer confirmations to them too."""
-    profile = business_service.get_any_profile(provider or calendar_connections_service.get_any_platform() or settings.calendar_provider)
+    profile = business_service.get_any_profile(call_context.get_last_account_id())
     if not profile:
         return None, None
     return profile.get("mobile"), profile.get("email")
@@ -75,7 +75,7 @@ def _build_location_array(payload) -> list[str] | None:
 @router.post("/get-business-hours", dependencies=[Depends(verify_webhook_secret)])
 def get_business_hours(payload: GetBusinessHoursRequest):
     logger.info("get-business-hours payload=%s", payload.model_dump())
-    profile = business_service.get_any_profile(_resolve_provider(payload.provider) or settings.calendar_provider)
+    profile = business_service.get_any_profile(call_context.get_last_account_id())
     if not profile:
         raise HTTPException(status_code=404, detail="No business profile found for this provider")
     now = datetime.now(ZoneInfo(settings.default_timezone))
@@ -90,7 +90,7 @@ def get_business_hours(payload: GetBusinessHoursRequest):
 def list_events(payload: ListEventsRequest):
     logger.info("list-events payload=%s", payload.model_dump())
     try:
-        events = calendar_service.list_events(payload.start_iso, payload.end_iso, provider=_resolve_provider(payload.provider))
+        events = calendar_service.list_events(payload.start_iso, payload.end_iso, provider=_resolve_provider(payload.provider), business_account_id=call_context.get_last_account_id())
         return {"events": events, "count": len(events)}
     except Exception as e:
         logger.exception("list-events failed")
@@ -110,6 +110,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
             description=payload.description,
             location=location_str,
             provider=provider,
+            business_account_id=call_context.get_last_account_id(),
         )
         background_tasks.add_task(
             email_service.send_booking_confirmation,
@@ -164,6 +165,7 @@ def create_event(payload: CreateEventRequest, background_tasks: BackgroundTasks)
             phone_number=payload.phone_number or call_context.get_last_to_number(),
             email=settings.user_email,  # caller no longer asked for email; hardcoded via USER_EMAIL env var
             reminder_sent=False,
+            business_account_id=call_context.get_last_account_id(),
         )
         return {"status": "created", **result}
     except Exception as e:
@@ -187,6 +189,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
             description=payload.description,
             location=location_str,
             provider=provider,
+            business_account_id=call_context.get_last_account_id(),
         )
         background_tasks.add_task(
             email_service.send_update_confirmation,
@@ -235,6 +238,7 @@ def update_event(payload: UpdateEventRequest, background_tasks: BackgroundTasks)
             location=location_array,  # [address_line, unit_type, unit_number, city, state, zip], or None if unchanged
             description=payload.description,
             email=settings.user_email,  # caller no longer asked for email; hardcoded via USER_EMAIL env var
+            business_account_id=call_context.get_last_account_id(),
         )
         return result
     except ValueError as e:
@@ -250,7 +254,7 @@ def delete_event(payload: DeleteEventRequest, background_tasks: BackgroundTasks)
     logger.info("delete-event payload=%s", payload.model_dump())
     provider = _resolve_provider(payload.provider)
     try:
-        result = calendar_service.delete_event(uid=payload.uid, provider=provider)
+        result = calendar_service.delete_event(uid=payload.uid, provider=provider, business_account_id=call_context.get_last_account_id())
         background_tasks.add_task(email_service.send_cancellation_confirmation, uid=payload.uid, email=settings.user_email)  # caller no longer asked for email; hardcoded via USER_EMAIL env var
         background_tasks.add_task(sms_service.send_cancellation_confirmation, to_number=payload.phone_number or call_context.get_last_to_number())
         owner_mobile, owner_email = _owner_contact(provider)
@@ -262,6 +266,7 @@ def delete_event(payload: DeleteEventRequest, background_tasks: BackgroundTasks)
             calendar_events_service.delete_event,
             uid=payload.uid,
             provider=provider or settings.calendar_provider,
+            business_account_id=call_context.get_last_account_id(),
         )
         return result
     except ValueError as e:

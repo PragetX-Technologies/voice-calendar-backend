@@ -47,7 +47,7 @@ def _resolve_provider_connection(business_account_id: str | None) -> dict | None
         conn = calendar_connections_service.get_connection(business_account_id, "apple")
         if conn is not None:
             return conn
-    return calendar_connections_service.get_any_connection("apple")
+    return calendar_connections_service.get_any_connection(business_account_id, "apple")
 
 
 def _provider_credentials(business_account_id: str | None) -> tuple[str, str]:

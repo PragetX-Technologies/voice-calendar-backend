@@ -53,13 +53,14 @@ def delete_event(uid: str, provider: str, account: str = "user", business_accoun
     get_db().calendar_events.delete_one({"_id": _doc_id(business_account_id, account, provider, uid)})
 
 
-def list_pending_reminders(hours_ahead: int | None = None) -> list[dict]:
+def list_pending_reminders(business_account_id: str, hours_ahead: int | None = None) -> list[dict]:
     """
     Cached events not yet reminder-called (same "reminder_sent != True" query
-    run_reminder_sweep() uses), for the dashboard to show what's still pending.
-    hours_ahead, if given, restricts to events starting within that window from now.
+    run_reminder_sweep() uses), scoped to one business, for the dashboard to
+    show what's still pending. hours_ahead, if given, restricts to events
+    starting within that window from now.
     """
-    query = {"reminder_sent": {"$ne": True}}
+    query = {"reminder_sent": {"$ne": True}, "business_account_id": business_account_id}
     if hours_ahead is not None:
         now = datetime.now()
         query["start"] = {"$gte": now.isoformat(), "$lte": (now + timedelta(hours=hours_ahead)).isoformat()}
