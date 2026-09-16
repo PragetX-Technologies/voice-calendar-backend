@@ -17,16 +17,29 @@ def _connected_email(connections: dict) -> str:
 
 def _with_live_connection(doc: dict, account_id: str) -> dict:
     """
-    Fills in `connections` and `email` from calendar_connections, which is the only
-    source of truth for both. They are never persisted on the profile: a stored copy
-    goes stale the moment a different calendar is connected, and the profile is only
-    re-saved when the owner happens to open Settings — so the dashboard kept showing,
-    and owner confirmations kept going to, the previously connected account.
+    Overwrites `connections` and `email` from calendar_connections, the only source of
+    truth for both — the client's own values are never trusted. Applied on read as well
+    as on write so a profile that somehow drifted still reads correctly.
     """
     connections = calendar_connections_service.public_status(account_id)
     doc["connections"] = connections
     doc["email"] = _connected_email(connections)
     return doc
+
+
+def refresh_connection_fields(account_id: str) -> None:
+    """
+    Writes the live connections/email onto the stored profile. Called by
+    calendar_connections_service on every connect/disconnect, so business_profiles
+    tracks calendar_connections instead of waiting for the owner to re-save their
+    profile. No-op when there's no profile yet — connecting happens during onboarding,
+    before the first save, and save_profile fills both fields in anyway.
+    """
+    connections = calendar_connections_service.public_status(account_id)
+    get_db().business_profiles.update_one(
+        {"_id": account_id},
+        {"$set": {"connections": connections, "email": _connected_email(connections)}},
+    )
 
 
 def get_profile(account_id: str) -> dict | None:
@@ -47,8 +60,6 @@ def get_any_profile(account_id: str | None) -> dict | None:
 
 
 def save_profile(account_id: str, profile: BusinessProfile) -> dict:
-    doc = profile.model_dump(by_alias=True)
-    doc.pop("email", None)
-    doc.pop("connections", None)
+    doc = _with_live_connection(profile.model_dump(by_alias=True), account_id)
     get_db().business_profiles.replace_one({"_id": account_id}, doc, upsert=True)
-    return _with_live_connection(doc, account_id)
+    return doc

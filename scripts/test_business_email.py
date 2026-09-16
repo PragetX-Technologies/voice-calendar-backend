@@ -1,77 +1,87 @@
 """
-Checks that the profile's `connections` and `email` follow the currently connected
-calendar account, including when the calendar is switched without re-saving the
-profile — the bug where the Settings page kept showing, and owner confirmations kept
-going to, the previously connected account.
+Checks that business_profiles.connections/.email track calendar_connections: written
+through on every connect/disconnect, and re-derived on read so a drifted profile still
+reads correctly. Covers the bug where connecting a different Google account left the
+profile (and so the Settings page, and owner confirmation emails) on the old address.
 
-Run manually: python -m scripts.test_business_email (from backend/). No DB: the
-profile lookup and the connections collection are stubbed out.
+Run manually: python -m scripts.test_business_email (from backend/). No DB: both
+collections are stubbed out.
 """
-from app import business_service
+from app import business_service, calendar_connections_service
 from app.business_schemas import BusinessProfile
 
 ACCOUNT_ID = "plumber1@business.com"
 
-connections: dict[str, dict] = {}
-stored: dict = {}
+# The stored business_profiles doc, as it looked with the stale copies in it.
+stored: dict = {
+    "_id": ACCOUNT_ID,
+    "businessName": "Dave's Plumbing",
+    "mobile": "+918849484100",
+    "email": "demo1.users09092026@gmail.com",
+    "connections": {"google": {"account": "demo1.users09092026@gmail.com"}},
+}
+live: dict[str, dict] = {"google": {"account": "demo1.users09092026@gmail.com"}}
 
 
 class _FakeProfiles:
     def find_one(self, _query):
-        return {"_id": ACCOUNT_ID, "businessName": "Dave's Plumbing", "mobile": "+918849484100",
-                "email": "stale@gmail.com", "connections": {"google": {"account": "stale@gmail.com"}}}
+        return dict(stored)
+
+    def update_one(self, _query, update):
+        stored.update(update["$set"])
 
     def replace_one(self, _query, doc, upsert=False):
         stored.clear()
-        stored.update(doc)
+        stored.update({"_id": ACCOUNT_ID, **doc})
+
+
+class _FakeConnections:
+    def replace_one(self, _query, doc, upsert=False):
+        live[doc["platform"]] = {"account": doc["account"]}
+
+    def delete_one(self, query):
+        live.pop(query["_id"].split(":")[-1], None)
 
 
 class _FakeDb:
     business_profiles = _FakeProfiles()
+    calendar_connections = _FakeConnections()
 
 
 def main() -> None:
     business_service.get_db = lambda: _FakeDb()
-    business_service.calendar_connections_service.public_status = lambda _id: {
-        p: {"account": c["account"]} for p, c in connections.items()
-    }
+    calendar_connections_service.get_db = lambda: _FakeDb()
+    calendar_connections_service.public_status = lambda _id: {p: dict(c) for p, c in live.items()}
 
-    connections["google"] = {"account": "demo1.users09092026@gmail.com"}
-    profile = business_service.get_profile(ACCOUNT_ID)
-    assert profile["email"] == "demo1.users09092026@gmail.com", profile["email"]
-    assert profile["connections"] == {"google": {"account": "demo1.users09092026@gmail.com"}}, profile["connections"]
+    # Connecting a different Google account rewrites the stored profile, no re-save needed.
+    calendar_connections_service.save_connection(ACCOUNT_ID, "google", "averma@pragetx.com", {"refresh_token": "tok"})
+    assert stored["email"] == "averma@pragetx.com", stored["email"]
+    assert stored["connections"] == {"google": {"account": "averma@pragetx.com"}}, stored["connections"]
 
-    # Owner connects a different Google account — no profile re-save in between.
-    connections["google"] = {"account": "averma@pragetx.com"}
-    profile = business_service.get_profile(ACCOUNT_ID)
-    assert profile["email"] == "averma@pragetx.com", profile["email"]
-    assert profile["connections"] == {"google": {"account": "averma@pragetx.com"}}, profile["connections"]
+    # ...and the read path agrees.
+    assert business_service.get_profile(ACCOUNT_ID)["email"] == "averma@pragetx.com"
 
-    # Apple only.
-    connections.clear()
-    connections["apple"] = {"account": "owner@icloud.com"}
-    assert business_service.get_profile(ACCOUNT_ID)["email"] == "owner@icloud.com"
+    # Disconnecting clears both, so email_service._send no-ops instead of mailing the old owner.
+    calendar_connections_service.delete_connection(ACCOUNT_ID, "google")
+    assert stored["email"] == "", stored["email"]
+    assert stored["connections"] == {}, stored["connections"]
 
-    # Nothing connected — no address, so email_service._send no-ops instead of
-    # mailing whoever was connected last.
-    connections.clear()
-    profile = business_service.get_profile(ACCOUNT_ID)
-    assert profile["email"] == "", profile["email"]
-    assert profile["connections"] == {}, profile["connections"]
-
-    # Saving never persists either field, so no stale copy can come back.
-    connections["google"] = {"account": "averma@pragetx.com"}
+    # A profile save never lets client-supplied values through.
+    live["apple"] = {"account": "owner@icloud.com"}
     saved = business_service.save_profile(
         ACCOUNT_ID,
         BusinessProfile(businessName="Dave's Plumbing", mobile="+918849484100",
                         email="typed-by-hand@example.com",
-                        connections={"apple": {"account": "spoofed@icloud.com"}}),
+                        connections={"google": {"account": "spoofed@gmail.com"}}),
     )
-    assert "email" not in stored and "connections" not in stored, stored
-    assert saved["email"] == "averma@pragetx.com", saved["email"]
-    assert saved["connections"] == {"google": {"account": "averma@pragetx.com"}}, saved["connections"]
+    assert saved["email"] == "owner@icloud.com", saved["email"]
+    assert stored["connections"] == {"apple": {"account": "owner@icloud.com"}}, stored["connections"]
 
-    print("connections and email follow the connected calendar; neither is persisted")
+    # A profile that drifted anyway (direct DB edit) still reads correctly.
+    stored["email"] = "stale@gmail.com"
+    assert business_service.get_profile(ACCOUNT_ID)["email"] == "owner@icloud.com"
+
+    print("business_profiles tracks calendar_connections on connect, disconnect and save")
     print("OK")
 
 

@@ -16,12 +16,23 @@ def _doc_id(account_id: str, platform: str) -> str:
     return f"{account_id}:{platform}"
 
 
+def _sync_profile(account_id: str) -> None:
+    """
+    Mirrors the change onto business_profiles.connections/.email. Imported here rather
+    than at module scope because business_service imports this module.
+    """
+    from app import business_service
+
+    business_service.refresh_connection_fields(account_id)
+
+
 def save_connection(account_id: str, platform: str, account: str, secret: dict) -> None:
     get_db().calendar_connections.replace_one(
         {"_id": _doc_id(account_id, platform)},
         {"account_id": account_id, "platform": platform, "account": account, **secret},
         upsert=True,
     )
+    _sync_profile(account_id)
 
 
 def get_connection(account_id: str, platform: str) -> dict | None:
@@ -57,6 +68,7 @@ def get_any_platform(account_id: str | None) -> str | None:
 
 def delete_connection(account_id: str, platform: str) -> None:
     get_db().calendar_connections.delete_one({"_id": _doc_id(account_id, platform)})
+    _sync_profile(account_id)
 
 
 def public_status(account_id: str) -> dict:
