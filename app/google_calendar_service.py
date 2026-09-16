@@ -9,11 +9,12 @@ via scripts/google_oauth_setup.py) and "provider" (the signed-in business
 owner's calendar, connected from the UI's "Connect Google Calendar" flow
 and looked up per business account via calendar_connections_service — see
 app/routers/oauth.py). The webhook path (ElevenLabs tool calls) has no
-signed-in session, so it falls back to "whichever business has Google
-connected" — same single-tenant fallback as caldav_service.
+signed-in session, so its business_account_id comes from app.call_context
+instead — same as caldav_service.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from datetime import datetime
@@ -27,47 +28,61 @@ from app.config import settings
 
 logger = logging.getLogger("google_calendar_service")
 
-_services: dict[str, "googleapiclient.discovery.Resource"] = {}
+# (account, business_account_id) -> (credential fingerprint, service). One entry per
+# account: the fingerprint is re-checked on every lookup, so reconnecting a different
+# Google account replaces the entry instead of leaving a stale one behind.
+_services: dict[str, tuple[str, "googleapiclient.discovery.Resource"]] = {}
 
 
-def _client_cache_key(account: str, business_account_id: str | None) -> str:
+def _cache_key(account: str, business_account_id: str | None) -> str:
     return account if account == "user" else f"provider:{business_account_id}"
 
 
 def _resolve_provider_connection(business_account_id: str | None) -> dict | None:
-    if business_account_id:
-        conn = calendar_connections_service.get_connection(business_account_id, "google")
-        if conn is not None:
-            return conn
+    """The Google connection saved for this business account, or None if it has none."""
     return calendar_connections_service.get_any_connection(business_account_id, "google")
 
 
 def _get_service(account: str = "user", business_account_id: str | None = None):
-    key = _client_cache_key(account, business_account_id)
-    if key not in _services:
-        if account == "user":
-            # Minted by scripts/google_oauth_setup.py against the Desktop OAuth client.
-            refresh_token = settings.google_refresh_token
-            client_id, client_secret = settings.google_client_id, settings.google_client_secret
-        else:
-            # Minted by app/routers/oauth.py's popup flow against the Web OAuth client —
-            # refreshing it with the Desktop client's id/secret fails with unauthorized_client.
-            conn = _resolve_provider_connection(business_account_id)
-            if conn is None:
-                raise RuntimeError("Google Calendar isn't connected for any business yet. Connect it from Settings.")
-            refresh_token = conn["refresh_token"]
-            client_id, client_secret = settings.google_oauth_client_id, settings.google_oauth_client_secret
+    """
+    Builds and caches the Calendar API client for the given account.
 
-        creds = Credentials(
-            token=None,
-            refresh_token=refresh_token,
-            token_uri="https://oauth2.googleapis.com/token",
-            client_id=client_id,
-            client_secret=client_secret,
-            scopes=["https://www.googleapis.com/auth/calendar"],
-        )
-        _services[key] = build("calendar", "v3", credentials=creds)
-    return _services[key]
+    The cached entry is stamped with a fingerprint of the refresh token it was built
+    from, so disconnecting and connecting a different Google account forces a fresh
+    client instead of serving the previously connected account's calendar for the
+    life of the process.
+    """
+    if account == "user":
+        # Minted by scripts/google_oauth_setup.py against the Desktop OAuth client.
+        refresh_token = settings.google_refresh_token
+        client_id, client_secret = settings.google_client_id, settings.google_client_secret
+    else:
+        # Minted by app/routers/oauth.py's popup flow against the Web OAuth client —
+        # refreshing it with the Desktop client's id/secret fails with unauthorized_client.
+        conn = _resolve_provider_connection(business_account_id)
+        if conn is None:
+            raise RuntimeError("Google Calendar isn't connected for any business yet. Connect it from Settings.")
+        refresh_token = conn["refresh_token"]
+        client_id, client_secret = settings.google_oauth_client_id, settings.google_oauth_client_secret
+
+    fingerprint = hashlib.sha256(f"{client_id}\0{refresh_token}".encode()).hexdigest()
+    key = _cache_key(account, business_account_id)
+
+    cached = _services.get(key)
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
+
+    creds = Credentials(
+        token=None,
+        refresh_token=refresh_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=client_id,
+        client_secret=client_secret,
+        scopes=["https://www.googleapis.com/auth/calendar"],
+    )
+    service = build("calendar", "v3", credentials=creds)
+    _services[key] = (fingerprint, service)
+    return service
 
 
 def _mirror_to_provider(action: str, fn, business_account_id: str | None) -> None:

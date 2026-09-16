@@ -15,6 +15,7 @@ clear error telling the caller to connect it from Settings.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import uuid
 from datetime import datetime, timedelta
@@ -29,58 +30,49 @@ from app.config import settings
 
 logger = logging.getLogger("caldav_service")
 
-_clients: dict[str, caldav.DAVClient] = {}
-_calendars: dict[str, caldav.Calendar] = {}
+# (account, business_account_id) -> (credential fingerprint, calendar). One entry per
+# account: the fingerprint is re-checked on every lookup, so reconnecting a different
+# Apple ID replaces the entry instead of leaving a stale one behind.
+_calendars: dict[str, tuple[str, caldav.Calendar]] = {}
 
 
-def _client_cache_key(account: str, business_account_id: str | None) -> str:
+def _cache_key(account: str, business_account_id: str | None) -> str:
     return account if account == "user" else f"provider:{business_account_id}"
 
 
 def _resolve_provider_connection(business_account_id: str | None) -> dict | None:
-    """
-    Scoped lookup when we know which business is asking (the dashboard,
-    authenticated); falls back to "whichever business has Apple connected"
-    for the ElevenLabs webhook path, which has no signed-in account context.
-    """
-    if business_account_id:
-        conn = calendar_connections_service.get_connection(business_account_id, "apple")
-        if conn is not None:
-            return conn
+    """The Apple connection saved for this business account, or None if it has none."""
     return calendar_connections_service.get_any_connection(business_account_id, "apple")
 
 
-def _provider_credentials(business_account_id: str | None) -> tuple[str, str]:
+def _credentials(account: str, business_account_id: str | None) -> tuple[str, str]:
+    if account == "user":
+        return settings.apple_id, settings.apple_app_specific_password
     conn = _resolve_provider_connection(business_account_id)
     if conn is None:
         raise RuntimeError("Apple Calendar isn't connected for any business yet. Connect it from Settings.")
     return conn["account"], conn["app_specific_password"]
 
 
-def _get_client(account: str = "user", business_account_id: str | None = None) -> caldav.DAVClient:
-    key = _client_cache_key(account, business_account_id)
-    if key not in _clients:
-        if account == "user":
-            username, password = settings.apple_id, settings.apple_app_specific_password
-        else:
-            username, password = _provider_credentials(business_account_id)
-        _clients[key] = caldav.DAVClient(
-            url=settings.apple_caldav_url,
-            username=username,
-            password=password,
-        )
-    return _clients[key]
-
-
 def _get_calendar(account: str = "user", business_account_id: str | None = None) -> caldav.Calendar:
-    """Finds and caches the target calendar on the given iCloud account."""
-    key = _client_cache_key(account, business_account_id)
-    if key in _calendars:
-        return _calendars[key]
+    """
+    Finds and caches the target calendar on the given iCloud account.
 
-    client = _get_client(account, business_account_id)
-    principal = client.principal()
-    calendars = principal.calendars()
+    The cached entry is stamped with a fingerprint of the credentials it was built from.
+    Disconnecting and connecting a different Apple ID — or rotating the app-specific
+    password — changes that fingerprint and forces a fresh client, so the previously
+    connected account's events can't keep being served for the life of the process.
+    """
+    username, password = _credentials(account, business_account_id)
+    fingerprint = hashlib.sha256(f"{username}\0{password}".encode()).hexdigest()
+    key = _cache_key(account, business_account_id)
+
+    cached = _calendars.get(key)
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
+
+    client = caldav.DAVClient(url=settings.apple_caldav_url, username=username, password=password)
+    calendars = client.principal().calendars()
 
     if not calendars:
         raise RuntimeError(f"No calendars found on the '{account}' iCloud account.")
@@ -99,7 +91,7 @@ def _get_calendar(account: str = "user", business_account_id: str | None = None)
     else:
         calendar = calendars[0]
 
-    _calendars[key] = calendar
+    _calendars[key] = (fingerprint, calendar)
     return calendar
 
 
