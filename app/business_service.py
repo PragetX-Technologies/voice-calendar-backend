@@ -7,16 +7,26 @@ from app.business_schemas import BusinessProfile
 from app.db import get_db
 
 
-def _connected_email(account_id: str) -> str:
-    """
-    The business email is whichever calendar account is connected right now —
-    google preferred — never owner-typed. Empty when nothing is connected.
-    """
+def _connected_email(connections: dict) -> str:
+    """Google preferred, then Apple. Empty string when nothing is connected."""
     for platform in ("google", "apple"):
-        conn = calendar_connections_service.get_connection(account_id, platform)
-        if conn is not None:
-            return conn["account"]
+        if platform in connections:
+            return connections[platform]["account"]
     return ""
+
+
+def _with_live_connection(doc: dict, account_id: str) -> dict:
+    """
+    Fills in `connections` and `email` from calendar_connections, which is the only
+    source of truth for both. They are never persisted on the profile: a stored copy
+    goes stale the moment a different calendar is connected, and the profile is only
+    re-saved when the owner happens to open Settings — so the dashboard kept showing,
+    and owner confirmations kept going to, the previously connected account.
+    """
+    connections = calendar_connections_service.public_status(account_id)
+    doc["connections"] = connections
+    doc["email"] = _connected_email(connections)
+    return doc
 
 
 def get_profile(account_id: str) -> dict | None:
@@ -24,11 +34,7 @@ def get_profile(account_id: str) -> dict | None:
     if doc is None:
         return None
     doc.pop("_id")
-    # Derived on every read, not trusted from the stored doc: connecting a different
-    # calendar has to change the address owner confirmations go to immediately, not
-    # only after the owner happens to re-save their profile.
-    doc["email"] = _connected_email(account_id)
-    return doc
+    return _with_live_connection(doc, account_id)
 
 
 def get_any_profile(account_id: str | None) -> dict | None:
@@ -42,6 +48,7 @@ def get_any_profile(account_id: str | None) -> dict | None:
 
 def save_profile(account_id: str, profile: BusinessProfile) -> dict:
     doc = profile.model_dump(by_alias=True)
-    doc["email"] = _connected_email(account_id)
+    doc.pop("email", None)
+    doc.pop("connections", None)
     get_db().business_profiles.replace_one({"_id": account_id}, doc, upsert=True)
-    return doc
+    return _with_live_connection(doc, account_id)
