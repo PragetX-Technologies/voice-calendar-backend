@@ -5,13 +5,18 @@ ElevenLabs agent) know which business the call belongs to and can SMS the
 right number even when ElevenLabs doesn't echo back the phone_number
 dynamic variable as a tool parameter.
 
+account_id is also set on dashboard login / every authenticated dashboard
+request (app.auth.require_account_id), so inbound calls — which never go
+through /calls/trigger — resolve to the signed-in business owner.
+
 Persisted in Mongo (not a process-local global) so it survives across
 worker processes/instances and restarts between the trigger call and the
 webhook calls ElevenLabs makes seconds later.
 
 # ponytail: single doc, not keyed by conversation_id — correct only for one
-# call in flight at a time. Upgrade to a doc per conversation_id once
-# ElevenLabs tool payloads carry it, or once concurrent calls matter.
+# business active at a time (a second account signing in mid-call repoints
+# that call's webhooks). Upgrade: ElevenLabs conversation-initiation webhook
+# mapping called number -> account, stored per conversation_id.
 """
 from app.db import get_db
 

@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app import accounts_service
+from app import accounts_service, call_context
 from app.auth import create_access_token, require_account_id
 from app.auth_schemas import AccountResponse, LoginRequest, TokenResponse
 
@@ -16,6 +16,7 @@ def login(payload: LoginRequest):
     account = accounts_service.authenticate(payload.username, payload.password)
     if account is None:
         raise HTTPException(status_code=401, detail="Invalid username or password")
+    call_context.set_last_account_id(account["_id"])
     return TokenResponse(access_token=create_access_token(account["_id"]))
 
 

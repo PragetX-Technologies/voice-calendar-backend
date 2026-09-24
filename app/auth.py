@@ -8,6 +8,7 @@ import jwt
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from app import call_context
 from app.config import settings
 
 _JWT_ALGORITHM = "HS256"
@@ -34,4 +35,8 @@ def decode_account_id(token: str) -> str:
 def require_account_id(credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> str:
     if credentials is None:
         raise HTTPException(status_code=401, detail="Missing bearer token")
-    return decode_account_id(credentials.credentials)
+    account_id = decode_account_id(credentials.credentials)
+    # Inbound calls (customer dials the agent) never hit /calls/trigger, so the
+    # tool webhooks resolve the business from whoever is signed in to the dashboard.
+    call_context.set_last_account_id(account_id)
+    return account_id

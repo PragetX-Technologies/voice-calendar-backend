@@ -45,7 +45,11 @@ def verify_webhook_secret(x_webhook_secret: str = Header(default="")) -> None:
 
 def _resolve_provider(payload_provider: str | None) -> str | None:
     """Trust which platform this business actually has connected over whatever the agent guessed."""
-    return calendar_connections_service.get_any_platform(call_context.get_last_account_id()) or payload_provider
+    account_id = call_context.get_last_account_id()
+    platform = calendar_connections_service.get_any_platform(account_id)
+    if platform is None:
+        logger.warning("no calendar connection for account_id=%s, falling back to provider=%s", account_id, payload_provider or settings.calendar_provider)
+    return platform or payload_provider
 
 
 def _owner_contact(provider: str | None) -> tuple[str | None, str | None]:

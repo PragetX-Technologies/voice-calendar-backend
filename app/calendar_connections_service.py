@@ -62,8 +62,10 @@ def get_any_platform(account_id: str | None) -> str | None:
     """
     if not account_id:
         return None
-    doc = get_db().calendar_connections.find_one({"account_id": account_id})
-    return doc["platform"] if doc else None
+    # Fixed PLATFORMS order (google first, same as the profile email) so an
+    # account with both connected always resolves the same way.
+    connected = {d["platform"] for d in get_db().calendar_connections.find({"account_id": account_id}, {"platform": 1})}
+    return next((p for p in PLATFORMS if p in connected), None)
 
 
 def delete_connection(account_id: str, platform: str) -> None:
