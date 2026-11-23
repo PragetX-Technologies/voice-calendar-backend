@@ -11,12 +11,14 @@ _PROVIDER_DESC = (
 
 
 class GetBusinessHoursRequest(BaseModel):
+    account_id: str | None = Field(None, description="Business account this call belongs to (Smart IVR agent sends it as a dynamic variable); omitted = shared last-call account")
     provider: str | None = Field(None, description=_PROVIDER_DESC)
 
 
 class ListEventsRequest(BaseModel):
     start_iso: str = Field(..., description="Start of the search window, ISO 8601, e.g. 2026-07-25T00:00:00")
     end_iso: str = Field(..., description="End of the search window, ISO 8601, e.g. 2026-07-26T00:00:00")
+    account_id: str | None = Field(None, description="Business account this call belongs to (Smart IVR agent sends it as a dynamic variable); omitted = shared last-call account")
     provider: str | None = Field(None, description=_PROVIDER_DESC)
 
 
@@ -31,6 +33,7 @@ class CreateEventRequest(BaseModel):
     city: str = Field("", description="City")
     state: str = Field("", description="State")
     zip: str = Field("", description="ZIP/postal code")
+    account_id: str | None = Field(None, description="Business account this call belongs to (Smart IVR agent sends it as a dynamic variable); omitted = shared last-call account")
     provider: str | None = Field(None, description=_PROVIDER_DESC)
     phone_number: str | None = Field(None, description="Caller's phone number (dynamic variable from call trigger), used as SMS recipient")
     email: str | None = Field(None, description="Unused — email now hardcoded server-side via settings.user_email; agent no longer collects it")
@@ -49,6 +52,7 @@ class UpdateEventRequest(BaseModel):
     city: str | None = Field(None, description="New city, only if changing")
     state: str | None = Field(None, description="New state, only if changing")
     zip: str | None = Field(None, description="New ZIP/postal code, only if changing")
+    account_id: str | None = Field(None, description="Business account this call belongs to (Smart IVR agent sends it as a dynamic variable); omitted = shared last-call account")
     provider: str | None = Field(None, description=_PROVIDER_DESC)
     phone_number: str | None = Field(None, description="Caller's phone number (dynamic variable from call trigger), used as SMS recipient")
     email: str | None = Field(None, description="Unused — email now hardcoded server-side via settings.user_email; agent no longer collects it")
@@ -56,6 +60,7 @@ class UpdateEventRequest(BaseModel):
 
 class DeleteEventRequest(BaseModel):
     uid: str = Field(..., description="The unique id of the event to delete")
+    account_id: str | None = Field(None, description="Business account this call belongs to (Smart IVR agent sends it as a dynamic variable); omitted = shared last-call account")
     provider: str | None = Field(None, description=_PROVIDER_DESC)
     phone_number: str | None = Field(None, description="Caller's phone number (dynamic variable from call trigger), used as SMS recipient")
     email: str | None = Field(None, description="Unused — email now hardcoded server-side via settings.user_email; agent no longer collects it")

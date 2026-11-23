@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo
 import httpx
 import websockets
 
-from app import business_service, call_context
+from app import business_service
 from app.config import settings
 
 logger = logging.getLogger("ivr")
@@ -146,10 +146,6 @@ async def get_or_create(session_id: str, phone: str, destination: str) -> IvrSes
         }))
         session.reader = asyncio.create_task(_reader(session))
         _sessions[session_id] = session
-        # ponytail: tools still resolve account/phone from the global "last call" doc, so two simultaneous
-        # IVR calls would cross wires. Upgrade: pass session_id/account_id as tool params (dynamic variables above).
-        call_context.set_last_account_id(session.account_id)
-        call_context.set_last_to_number(phone)
         logger.info("ivr session opened id=%s phone=%s destination=%s", session_id, phone, destination)
         return session
 
