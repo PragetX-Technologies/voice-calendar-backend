@@ -38,6 +38,7 @@ def _is_wait_line(text: str) -> bool:
     return "?" not in t and any(m in t for m in WAIT_MARKERS)
 
 
+NUDGE_AFTER = 7.0  # seconds of silence after a waiting line before we poke the agent
 _CLOSED = object()  # queue sentinel: the socket died
 
 
@@ -180,6 +181,7 @@ async def resume(session: IvrSession) -> str:
 
 async def _collect(session: IvrSession, early_on_tool: bool) -> str:
     parts: list[str] = []
+    nudged = False
     started = time.monotonic()
     deadline = started + settings.ivr_turn_timeout_seconds
     while True:
@@ -191,11 +193,18 @@ async def _collect(session: IvrSession, early_on_tool: bool) -> str:
         # agent_response_complete, or once we have some text and the socket goes quiet.
         # While a tool call is running, wait much longer for the agent's follow-up answer.
         quiet = settings.ivr_quiet_seconds if session.tools_in_flight == 0 else 8.0
+        # After a waiting line the tool normally answers within ~3s. If nothing at all arrives for NUDGE_AFTER seconds the agent
+        # said "one moment" but never called the tool (seen with the "update" line): poke it once instead of dead air.
+        watch_stuck = not early_on_tool and not parts and not nudged
         try:
-            msg = await asyncio.wait_for(session.queue.get(), timeout=min(remaining, quiet if parts else remaining))
+            msg = await asyncio.wait_for(session.queue.get(), timeout=min(remaining, quiet if parts else (NUDGE_AFTER if watch_stuck else remaining)))
         except asyncio.TimeoutError:
             if parts:
                 break
+            if watch_stuck:
+                nudged = True
+                logger.warning("ivr agent silent after waiting line id=%s, nudging", session.id)
+                await session.ws.send(json.dumps({"type": "user_message", "text": "Yes, please go ahead and do it now."}))
             continue
         logger.info("ivr evt id=%s +%.2fs %s", session.id, time.monotonic() - started, msg.get("type") if msg is not _CLOSED else "CLOSED")
         if msg is _CLOSED:
