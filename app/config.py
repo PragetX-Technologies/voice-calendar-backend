@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     elevenlabs_ivr_agent_id: str = ""  # dedicated text-only ElevenLabs agent for IVR (not Aura/Echo)
     ivr_session_idle_seconds: int = 300  # close a session's ElevenLabs socket after this long with no request
     ivr_turn_timeout_seconds: float = 25  # max wait for the agent's reply to one caller turn
-    ivr_quiet_seconds: float = 1.0  # after the agent's text, finish the turn if nothing else arrives for this long (and no tool is running)
+    ivr_quiet_seconds: float = 0.0  # 0 = reply the moment the agent's text arrives; >0 = also wait this long for a further part (adds latency)
     ivr_greeting: str = "Hello, how can I help you today?"
     ivr_hangup_phrases: str = "client hangup,caller hangup,[hangup],__hangup__"  # comma-separated, matched case-insensitively against the whole text
     ivr_transfer_dest: str = ""  # DDI/extension for type=transfer

@@ -29,7 +29,15 @@ from app.config import settings
 logger = logging.getLogger("ivr")
 
 SIGNED_URL_ENDPOINT = "https://api.elevenlabs.io/v1/convai/conversation/get-signed-url"
-WAIT_MARKER = "one moment"  # every waiting line the prompt allows contains this
+WAIT_MARKERS = ("one moment", "one second", "hold on", "let me check", "let me look", "let me book", "let me move", "let me cancel", "let me update", "checking")
+
+
+def _is_wait_line(text: str) -> bool:
+    """The agent's "one moment..." line said right before a calendar tool runs (a question is never a waiting line)."""
+    t = text.lower()
+    return "?" not in t and any(m in t for m in WAIT_MARKERS)
+
+
 _CLOSED = object()  # queue sentinel: the socket died
 
 
@@ -198,8 +206,12 @@ async def _collect(session: IvrSession, early_on_tool: bool) -> str:
         if kind == "agent_response":
             parts.append(msg["agent_response_event"]["agent_response"])
             # Text-only mode emits no tool events, so the agent's waiting line ("...one moment.") is the only sign a tool is running.
-            if early_on_tool and WAIT_MARKER in parts[-1].lower():
+            if early_on_tool and _is_wait_line(parts[-1]):
                 session.continuing = True
+                break
+            # The agent calls request_transfer/end_conversation BEFORE speaking, so pending_action is already set here;
+            # it then repeats its line once more ~0.5s later, which we don't want. quiet <= 0 = reply as soon as text arrives.
+            if session.pending_action or settings.ivr_quiet_seconds <= 0:
                 break
         elif kind == "agent_tool_request":
             session.tools_in_flight += 1
@@ -220,7 +232,7 @@ async def _collect(session: IvrSession, early_on_tool: bool) -> str:
             logger.debug("ivr ignoring %s", kind)
     session.last_active = time.monotonic()
     if session.continuing:  # the model sometimes says two waiting lines; speak only the last one
-        lines = [l.strip() for p in parts for l in p.splitlines() if WAIT_MARKER in l.lower()]
+        lines = [l.strip() for p in parts for l in p.splitlines() if _is_wait_line(l)]
         return lines[-1] if lines else " ".join(p.strip() for p in parts)
     unique: list[str] = []
     for p in (x.strip() for x in parts):  # the model sometimes repeats the same sentence (e.g. goodbye before and after a tool)

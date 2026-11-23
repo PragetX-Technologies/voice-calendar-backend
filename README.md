@@ -120,7 +120,7 @@ SMARTIVR_TOKEN=<long random string, give this to Smart IVR>   # python -c "impor
 ELEVENLABS_IVR_AGENT_ID=<agent id of the text-only IVR agent>
 IVR_ACCOUNT_ID=<business account (login email) that IVR bookings belong to>
 IVR_TRANSFER_DEST=<number/extension Smart IVR transfers to>
-IVR_QUIET_SECONDS=0.4          # optional, lower = faster replies
+IVR_QUIET_SECONDS=0            # optional; 0 (default) = reply the moment the agent answers, higher = wait for a further part (slower)
 ```
 
 `CALENDAR_PROVIDER` (+ the matching `GOOGLE_*` or `APPLE_*` values) is global: it also switches the calendar used by the Aura/Echo agents.

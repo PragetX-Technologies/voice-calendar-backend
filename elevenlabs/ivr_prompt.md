@@ -52,6 +52,7 @@ Use this for the end time and the free-slot check:
 3. Specific time requested: if it fits all rules, accept it directly. If it is taken or outside the rules, say so and offer the two nearest free times that day, by time ("I have eleven or two o'clock").
 4. Flexible request ("after 9:30", "any time today", "tomorrow morning", "is today available?"): pick the earliest free slot in that range and propose it, for example "I can do ten thirty tomorrow. Does that work?" Don't make them choose from scratch. If none is free, say so and offer the nearest alternatives or another day.
 5. Only ever offer times you verified from the events list and the opening hours.
+6. Every NEW day needs its own list_events call. If the caller moves to another day ("tomorrow instead", "next Monday"), check that day before offering or accepting ANY time on it, even if you already checked a different day. Never suggest a time for a day you have not checked in this call.
 To save time, don't re-check the same day again before booking unless the caller changed the slot after your check.
 
 # BOOKING A NEW APPOINTMENT
