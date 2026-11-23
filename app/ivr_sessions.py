@@ -38,6 +38,8 @@ def _is_wait_line(text: str) -> bool:
     return "?" not in t and any(m in t for m in WAIT_MARKERS)
 
 
+WAIT_LINE_AFTER = 1.0  # no event at all this long after the caller spoke = the agent is running a tool; we say the waiting line ourselves
+WAIT_LINES = ("One moment, please.", "Just a moment.", "One moment while I check that.")
 NUDGE_AFTER = 7.0  # seconds of silence after a waiting line before we poke the agent
 _CLOSED = object()  # queue sentinel: the socket died
 
@@ -62,6 +64,7 @@ class IvrSession:
     # a turn that returned early with the agent's "one moment" line while a tool still runs; the router calls resume() on Smart IVR's empty callback
     continuing: bool = False
     tools_in_flight: int = 0
+    wait_line_idx: int = 0
 
 
 _sessions: dict[str, IvrSession] = {}
@@ -134,6 +137,10 @@ async def _handle_client_tool(session: IvrSession, call: dict) -> None:
         }))
 
 
+def get(session_id: str) -> IvrSession | None:
+    return _sessions.get(session_id)
+
+
 async def get_or_create(session_id: str, phone: str, destination: str) -> IvrSession:
     async with _create_lock:
         session = _sessions.get(session_id)
@@ -182,6 +189,7 @@ async def resume(session: IvrSession) -> str:
 async def _collect(session: IvrSession, early_on_tool: bool) -> str:
     parts: list[str] = []
     nudged = False
+    got_event = False
     started = time.monotonic()
     deadline = started + settings.ivr_turn_timeout_seconds
     while True:
@@ -196,16 +204,26 @@ async def _collect(session: IvrSession, early_on_tool: bool) -> str:
         # After a waiting line the tool normally answers within ~3s. If nothing at all arrives for NUDGE_AFTER seconds the agent
         # said "one moment" but never called the tool (seen with the "update" line): poke it once instead of dead air.
         watch_stuck = not early_on_tool and not parts and not nudged
+        # Fresh caller turn and the agent has produced nothing yet: a normal reply starts within ~0.6s. Silence past
+        # WAIT_LINE_AFTER means a tool is running, so speak the waiting line from here instead of relying on the LLM to write it.
+        watch_silence = early_on_tool and not got_event and not parts and not session.pending_action
+        wait = quiet if parts else (WAIT_LINE_AFTER if watch_silence else NUDGE_AFTER if watch_stuck else remaining)
         try:
-            msg = await asyncio.wait_for(session.queue.get(), timeout=min(remaining, quiet if parts else (NUDGE_AFTER if watch_stuck else remaining)))
+            msg = await asyncio.wait_for(session.queue.get(), timeout=min(remaining, wait))
         except asyncio.TimeoutError:
             if parts:
                 break
+            if watch_silence:
+                session.continuing = True
+                session.wait_line_idx += 1
+                logger.info("ivr silent %.1fs after caller turn id=%s, tool assumed running -> waiting line", WAIT_LINE_AFTER, session.id)
+                return WAIT_LINES[session.wait_line_idx % len(WAIT_LINES)]
             if watch_stuck:
                 nudged = True
                 logger.warning("ivr agent silent after waiting line id=%s, nudging", session.id)
                 await session.ws.send(json.dumps({"type": "user_message", "text": "Yes, please go ahead and do it now."}))
             continue
+        got_event = True
         logger.info("ivr evt id=%s +%.2fs %s", session.id, time.monotonic() - started, msg.get("type") if msg is not _CLOSED else "CLOSED")
         if msg is _CLOSED:
             if parts:
@@ -213,6 +231,8 @@ async def _collect(session: IvrSession, early_on_tool: bool) -> str:
             raise RuntimeError("ElevenLabs socket closed")
         kind = msg.get("type")
         if kind == "agent_response":
+            if not early_on_tool and _is_wait_line(msg["agent_response_event"]["agent_response"]):
+                continue  # the agent also wrote its own "one moment" after we already said ours: don't read it out as the answer
             parts.append(msg["agent_response_event"]["agent_response"])
             # Text-only mode emits no tool events, so the agent's waiting line ("...one moment.") is the only sign a tool is running.
             if early_on_tool and _is_wait_line(parts[-1]):

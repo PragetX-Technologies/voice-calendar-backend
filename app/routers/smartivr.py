@@ -6,10 +6,11 @@ one of ask / info / transfer / hangup. The reply text comes from an
 ElevenLabs text-only agent (app/ivr_sessions.py), which calls the existing
 /tools/* webhooks for calendar work.
 """
+import json
 import logging
 import secrets
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -74,16 +75,21 @@ async def smartivr(
     x_phone: str = Header(default="", description="Caller's phone as seen by Smart IVR"),
     x_destination: str = Header(default="", description="Number the caller dialed"),
 ):
-    logger.info("smartivr id=%s phone=%s destination=%s text=%r", payload.id, x_phone, x_destination, payload.text)
+    return await handle_turn(payload.id, payload.text, x_phone, x_destination)
+
+
+async def handle_turn(call_id: str, raw_text: str, phone: str, destination: str) -> IvrResponse:
+    """One caller turn -> one reply. Shared by the HTTP endpoint and the WebSocket endpoint."""
+    logger.info("smartivr id=%s phone=%s destination=%s text=%r", call_id, phone, destination, raw_text)
 
     # Caller hung up (agreed marker text): free the ElevenLabs socket, nothing to say back.
-    if _is_hangup_text(payload.text):
-        await ivr_sessions.close(payload.id)
+    if _is_hangup_text(raw_text):
+        await ivr_sessions.close(call_id)
         return IvrResponse(type="hangup")
 
-    text = payload.text.strip()
+    text = raw_text.strip()
     try:
-        session = await ivr_sessions.get_or_create(payload.id, x_phone, x_destination)
+        session = await ivr_sessions.get_or_create(call_id, phone, destination)
     except Exception:
         logger.exception("could not open agent session")
         return IvrResponse(type="ask", text="Sorry, I'm having trouble right now. Please try again.", lang=LANG)
@@ -95,7 +101,7 @@ async def smartivr(
         if session.pending_action and not text:
             response = _action_response(session)
             if response.type == "hangup":
-                await ivr_sessions.close(payload.id)
+                await ivr_sessions.close(call_id)
             return response
 
         # Last turn returned the agent's "one moment" line as 'info' while a tool ran: fetch the real answer now.
@@ -103,10 +109,10 @@ async def smartivr(
             try:
                 reply = await ivr_sessions.resume(session)
             except Exception:
-                logger.exception("agent resume failed id=%s", payload.id)
-                await ivr_sessions.close(payload.id)
+                logger.exception("agent resume failed id=%s", call_id)
+                await ivr_sessions.close(call_id)
                 return IvrResponse(type="ask", text="Sorry, something went wrong. Could you repeat that?", lang=LANG)
-            return await _finish(session, payload.id, reply)
+            return await _finish(session, call_id, reply)
 
         # First contact, or silence: nothing to forward to the agent yet.
         if not text:
@@ -119,11 +125,67 @@ async def smartivr(
         try:
             reply = await ivr_sessions.ask(session, text)
         except Exception:
-            logger.exception("agent turn failed id=%s", payload.id)
-            await ivr_sessions.close(payload.id)  # next turn opens a fresh conversation
+            logger.exception("agent turn failed id=%s", call_id)
+            await ivr_sessions.close(call_id)  # next turn opens a fresh conversation
             return IvrResponse(type="ask", text="Sorry, something went wrong. Could you repeat that?", lang=LANG)
 
-        return await _finish(session, payload.id, reply)
+        return await _finish(session, call_id, reply)
+
+
+# ---------------------------------------------------------------- WebSocket (same messages as HTTP)
+
+def _ws_authorized(ws: WebSocket) -> bool:
+    expected = settings.smartivr_token
+    auth = ws.headers.get("authorization", "")
+    token = auth[7:] if auth.lower().startswith("bearer ") else ws.query_params.get("token", "")
+    return bool(expected) and secrets.compare_digest(token, expected)
+
+
+async def _ws_send(ws: WebSocket, resp: IvrResponse) -> None:
+    await ws.send_text(resp.model_dump_json(exclude_none=True))
+
+
+@router.websocket("/smartivr/ws")
+async def smartivr_ws(ws: WebSocket):
+    """Same contract as POST /smartivr, over one socket per call: client sends {id, text}, we send {type, text, lang, dest, metadata}.
+    Bonus over HTTP: after an 'info' waiting line we push the real answer ourselves as a second message,
+    so Smart IVR needn't send the empty callback (if it still does, that one empty message is ignored)."""
+    if not _ws_authorized(ws):
+        await ws.close(code=1008)
+        return
+    await ws.accept()
+    phone = ws.headers.get("x-phone") or ws.query_params.get("phone", "")
+    destination = ws.headers.get("x-destination") or ws.query_params.get("destination", "")
+    call_ids: set[str] = set()
+    skip_empty = False
+    try:
+        while True:
+            try:
+                data = json.loads(await ws.receive_text())
+                call_id = str(data["id"])
+                text = str(data.get("text") or "")
+            except (ValueError, KeyError, TypeError):
+                await ws.send_text(json.dumps({"type": "error", "text": 'expected JSON {"id": "...", "text": "..."}'}))
+                continue
+            if not text.strip() and skip_empty:  # the empty callback after a pushed answer
+                skip_empty = False
+                continue
+            skip_empty = False
+            call_ids.add(call_id)
+            resp = await handle_turn(call_id, text, data.get("phone") or phone, data.get("destination") or destination)
+            await _ws_send(ws, resp)
+            session = ivr_sessions.get(call_id)
+            while resp.type == "info" and session and session.continuing:
+                resp = await handle_turn(call_id, "", phone, destination)  # resume: the tool's real answer
+                await _ws_send(ws, resp)
+                skip_empty = True
+            if resp.type in ("hangup", "transfer"):
+                skip_empty = False
+    except WebSocketDisconnect:
+        pass
+    finally:  # socket gone = call over
+        for cid in call_ids:
+            await ivr_sessions.close(cid)
 
 
 async def _finish(session: ivr_sessions.IvrSession, call_id: str, reply: str) -> IvrResponse:
