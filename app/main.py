@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -5,8 +6,9 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app import ivr_sessions
 from app.reminder_job import run_reminder_sweep
-from app.routers import auth, business, calendar_view, calls, oauth, sms, tools
+from app.routers import auth, business, calendar_view, calls, oauth, smartivr, sms, tools
 
 logging.basicConfig(level=logging.INFO)
 
@@ -17,7 +19,9 @@ scheduler = BackgroundScheduler()
 async def lifespan(app: FastAPI):
     scheduler.add_job(run_reminder_sweep, "interval", minutes=30, id="reminder_sweep")
     scheduler.start()
+    reaper = asyncio.create_task(ivr_sessions.reap_idle_forever())
     yield
+    reaper.cancel()
     scheduler.shutdown()
 
 
@@ -41,6 +45,7 @@ app.include_router(sms.router)
 app.include_router(business.router)
 app.include_router(oauth.router)
 app.include_router(auth.router)
+app.include_router(smartivr.router)
 
 
 @app.get("/health")

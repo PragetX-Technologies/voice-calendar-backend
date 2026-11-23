@@ -16,6 +16,7 @@ Copy the printed GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET / GOOGLE_REFRESH_TOKEN
 into your .env.
 """
 import sys
+from pathlib import Path
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 
@@ -23,7 +24,11 @@ SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
 
 def main():
-    client_secret_path = sys.argv[1] if len(sys.argv) > 1 else "client_secret.json"
+    # default: client_secret.json next to this script (git-ignored), regardless of where you run it from
+    client_secret_path = sys.argv[1] if len(sys.argv) > 1 else str(Path(__file__).with_name("client_secret.json"))
+    if not Path(client_secret_path).is_file():
+        sys.exit(f"Client secret file not found: {client_secret_path}\nDownload it from Google Cloud -> Credentials -> your Desktop OAuth client -> Download JSON, "
+                 "then save it there or pass its path:  python scripts/google_oauth_setup.py \"C:/path/to/client_secret_xxx.json\"")
 
     flow = InstalledAppFlow.from_client_secrets_file(client_secret_path, SCOPES)
     creds = flow.run_local_server(port=0)

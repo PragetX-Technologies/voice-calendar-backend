@@ -105,3 +105,45 @@ in the ElevenLabs dashboard to personalize the call.
   explicit tz info. Adjust in `.env` if needed.
 - **Encrypt credentials at rest** once you move to a real DB — app-specific
   passwords are still sensitive.
+
+## Smart IVR branch (`SmartIVR`) — text API for Interactive Powers' IVR
+
+Same backend plus `POST /smartivr` (Smart IVR sends each caller utterance as text; we reply `ask` / `info` / `transfer` / `hangup`).
+The reply text comes from a dedicated **text-only ElevenLabs agent**; it uses the same `/tools/*` calendar webhooks.
+Files: `app/routers/smartivr.py`, `app/ivr_sessions.py`, agent prompt in `elevenlabs/ivr_prompt.md`.
+Auth: Smart IVR sends `Authorization: Bearer <SMARTIVR_TOKEN>`.
+
+### Extra `.env` values
+
+```
+SMARTIVR_TOKEN=<long random string, give this to Smart IVR>   # python -c "import secrets;print(secrets.token_urlsafe(32))"
+ELEVENLABS_IVR_AGENT_ID=<agent id of the text-only IVR agent>
+IVR_ACCOUNT_ID=<business account (login email) that IVR bookings belong to>
+IVR_TRANSFER_DEST=<number/extension Smart IVR transfers to>
+IVR_QUIET_SECONDS=0.4          # optional, lower = faster replies
+```
+
+`CALENDAR_PROVIDER` (+ the matching `GOOGLE_*` or `APPLE_*` values) is global: it also switches the calendar used by the Aura/Echo agents.
+Run **one** uvicorn worker (IVR sessions live in process memory) — no `--workers N`.
+
+### Test locally
+
+```bash
+python -m scripts.seed_ivr_demo                      # one-time: business profile + hours for IVR_ACCOUNT_ID
+python scripts/fake_smartivr.py --token <SMARTIVR_TOKEN> --say "Hi, is anyone available today?"
+```
+
+### Deploy this branch on the server (EC2)
+
+```bash
+cd ~/voice-calendar-backend
+git fetch origin && git checkout SmartIVR && git pull origin SmartIVR
+source venv/bin/activate && pip install -r requirements.txt
+nano .env                                            # add the values above
+python -m scripts.seed_ivr_demo                      # first time only
+# restart however the app is run (find out with: systemctl list-units | grep -i -E "uvicorn|voice"  or  ps aux | grep uvicorn)
+sudo systemctl restart <service-name>
+```
+
+Then in ElevenLabs point the IVR agent's 4 webhook tools at `https://<your-domain>/tools/...`, and give Smart IVR `https://<your-domain>/smartivr` + the token.
+To go back to the voice-agent-only version: `git checkout main && git pull`, restart the service (the extra `.env` lines are ignored).
